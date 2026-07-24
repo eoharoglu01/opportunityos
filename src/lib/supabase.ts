@@ -1,0 +1,34 @@
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "../types/supabase";
+import { getSupabaseEnv, isSupabaseConfigured, logSupabaseRuntimeMode } from "./env";
+
+let cachedClient: SupabaseClient<Database> | null = null;
+
+export function getSupabaseClient(): SupabaseClient<Database> | null {
+  if (cachedClient) {
+    return cachedClient;
+  }
+
+  logSupabaseRuntimeMode();
+
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+
+  const { url, anonKey } = getSupabaseEnv();
+
+  if (!url || !anonKey) {
+    return null;
+  }
+
+  cachedClient = createClient<Database>(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+
+  return cachedClient;
+}
+
+export const supabase = getSupabaseClient();
