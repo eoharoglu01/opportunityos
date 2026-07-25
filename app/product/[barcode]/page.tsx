@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import ProductPriceHistory from "../../../components/ProductPriceHistory";
 type Opportunity = {
   id: number | string;
   productName: string;
@@ -46,67 +47,69 @@ export default function ProductDetailPage() {
   const [productImageUrl, setProductImageUrl] = useState("");
   const [imageFailed, setImageFailed] = useState(false);
 
-  useEffect(() => {
-    if (!barcode) return;
+useEffect(() => {
+  if (!barcode) {
+    setIsLoading(false);
+    setErrorMessage("Geçerli bir barkod bulunamadı.");
+    return;
+  }
 
-    const controller = new AbortController();
+  const controller = new AbortController();
 
-    async function loadProduct() {
-      try {
-        setIsLoading(true);
-        setErrorMessage("");
+  async function loadProduct() {
+    try {
+      setIsLoading(true);
+      setErrorMessage("");
 
-        const response = await fetch(
-          `/api/search?query=${encodeURIComponent(barcode)}`,
-          {
-            signal: controller.signal,
-            cache: "no-store",
-          },
+      const response = await fetch(
+        `/api/search?query=${encodeURIComponent(barcode)}`,
+        {
+          signal: controller.signal,
+          cache: "no-store",
+        },
+      );
+
+      const result = (await response.json()) as SearchResponse;
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.error || "Ürün bilgileri yüklenirken hata oluştu.",
         );
-
-        const result = (await response.json()) as SearchResponse;
-
-        if (!response.ok || !result.success) {
-          throw new Error(
-            result.error || "Ürün bilgileri yüklenirken hata oluştu.",
-          );
-        }
-
-        const sortedOffers = [...(result.data ?? [])].sort(
-          (a, b) => Number(a.price) - Number(b.price),
-        );
-
-        setOffers(sortedOffers);
-
-        if (sortedOffers.length === 0) {
-          setErrorMessage("Bu barkoda ait ürün veya fiyat bulunamadı.");
-        }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-
-        console.error("Ürün detayı yükleme hatası:", error);
-
-        setOffers([]);
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Ürün bilgileri yüklenirken beklenmeyen bir hata oluştu.",
-        );
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
       }
+
+      const sortedOffers = [...(result.data ?? [])].sort(
+        (a, b) => Number(a.price) - Number(b.price),
+      );
+
+      setOffers(sortedOffers);
+
+      if (sortedOffers.length === 0) {
+        setErrorMessage("Bu barkoda ait ürün veya fiyat bulunamadı.");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
+
+      console.error("Ürün detayı yükleme hatası:", error);
+
+      setOffers([]);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Ürün bilgileri yüklenirken beklenmeyen bir hata oluştu.",
+      );
+    } finally {
+      setIsLoading(false);
     }
+  }
 
-    void loadProduct();
+  void loadProduct();
 
-    return () => {
-      controller.abort();
-    };
-  }, [barcode]);
+  return () => {
+    controller.abort();
+  };
+}, [barcode]);
 
   useEffect(() => {
     if (!barcode) return;
@@ -138,9 +141,12 @@ export default function ProductDetailPage() {
           setProductImageUrl(imageUrl);
         }
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+       if (
+  error instanceof Error &&
+  error.name === "AbortError"
+) {
+  return;
+}
 
         console.error("Ürün görseli yükleme hatası:", error);
       }
@@ -717,54 +723,9 @@ export default function ProductDetailPage() {
                 backgroundColor: "rgba(15, 23, 42, 0.78)",
               }}
             >
-              <p
-                style={{
-                  margin: 0,
-                  color: "#60a5fa",
-                  fontSize: "13px",
-                  fontWeight: 900,
-                  textTransform: "uppercase",
-                }}
-              >
-                Fiyat geçmişi
-              </p>
-
-              <h2 style={{ margin: "8px 0 0", fontSize: "28px" }}>
-                Son 30 gün
-              </h2>
-
-              <div
-                style={{
-                  minHeight: "220px",
-                  display: "grid",
-                  placeItems: "center",
-                  marginTop: "20px",
-                  border: "1px dashed rgba(148, 163, 184, 0.25)",
-                  borderRadius: "18px",
-                  backgroundColor: "rgba(2, 6, 23, 0.36)",
-                  textAlign: "center",
-                }}
-              >
-                <div style={{ maxWidth: "440px", padding: "25px" }}>
-                  <div style={{ fontSize: "42px" }}>📈</div>
-
-                  <h3 style={{ margin: "12px 0 7px" }}>
-                    Fiyat geçmişi hazırlanıyor
-                  </h3>
-
-                  <p
-                    style={{
-                      margin: 0,
-                      color: "#94a3b8",
-                      lineHeight: 1.7,
-                    }}
-                  >
-                    Henüz geçmiş fiyat verisi bulunmuyor. Bir sonraki aşamada
-                    Supabase’e fiyat geçmişi tablosu ekleyerek gerçek grafiği
-                    burada göstereceğiz.
-                  </p>
-                </div>
-              </div>
+             
+ 
+              <ProductPriceHistory barcode={barcode} />
             </section>
           </>
         )}
