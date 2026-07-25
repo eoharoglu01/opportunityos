@@ -3,15 +3,24 @@ import { getSupabaseClient } from "../../lib/supabase";
 import type { Opportunity } from "../../types";
 import type { ProductRepository } from "../ProductRepository";
 
-type OpportunityRow = {
-  id: number;
-  product_name: string;
-  store: string;
-  price: string;
-  savings: string;
-  badge: string;
-  description: string;
-  created_at?: string;
+type ProductRow = {
+  id: string;
+  name: string;
+  barcode: string | null;
+};
+
+type StoreRow = {
+  id: string;
+  name: string;
+};
+
+type RelatedRow<T> = T | T[] | null;
+
+type PriceRow = {
+  id: string;
+  price: number | string;
+  products: RelatedRow<ProductRow>;
+  stores: RelatedRow<StoreRow>;
 };
 
 export class SupabaseProductRepository implements ProductRepository {
@@ -22,20 +31,45 @@ export class SupabaseProductRepository implements ProductRepository {
       throw new AppError("Supabase is not configured.", 503);
     }
 
-    let request = client.from("opportunities").select("*") as ReturnType<typeof client.from>;
+    const searchTerm = query?.trim();
 
-    if (query?.trim()) {
-      request = request.ilike("product_name", `%${query.trim()}%`) as ReturnType<typeof client.from>;
+    let request = client.from("prices").select(`
+      id,
+      price,
+      products!inner (
+        id,
+        name,
+        barcode
+      ),
+      stores!inner (
+        id,
+        name
+      )
+    `);
+
+    if (searchTerm) {
+      const isBarcode = /^\d{8,14}$/.test(searchTerm);
+
+      if (isBarcode) {
+        request = request.eq("products.barcode", searchTerm);
+      } else {
+        request = request.ilike("products.name", `%${searchTerm}%`);
+      }
     }
 
-    const { data, error } = await request;
+    const { data, error } = await request.order("price", {
+      ascending: true,
+    });
 
     if (error) {
       throw new AppError(error.message, 502);
     }
 
-    const rows = (data ?? []) as OpportunityRow[];
-    return rows.map((item) => this.mapRow(item));
+    const rows = (data ?? []) as unknown as PriceRow[];
+
+    return rows
+      .map((row) => this.mapPriceRow(row))
+      .filter((item): item is Opportunity => item !== null);
   }
 
   async getProductById(id: string): Promise<Opportunity | null> {
@@ -45,24 +79,63 @@ export class SupabaseProductRepository implements ProductRepository {
       throw new AppError("Supabase is not configured.", 503);
     }
 
-    const { data, error } = await client.from("opportunities").select("*").eq("id", Number(id)).maybeSingle();
+    const { data, error } = await client
+      .from("prices")
+      .select(`
+        id,
+        price,
+        products!inner (
+          id,
+          name,
+          barcode
+        ),
+        stores!inner (
+          id,
+          name
+        )
+      `)
+      .eq("id", id)
+      .maybeSingle();
 
     if (error) {
       throw new AppError(error.message, 502);
     }
 
-    return data ? this.mapRow(data as OpportunityRow) : null;
+    if (!data) {
+      return null;
+    }
+
+    return this.mapPriceRow(data as unknown as PriceRow);
   }
 
-  private mapRow(row: OpportunityRow): Opportunity {
+  private mapPriceRow(row: PriceRow): Opportunity | null {
+    const product = this.getRelatedRow(row.products);
+    const store = this.getRelatedRow(row.stores);
+
+    if (!product || !store) {
+      return null;
+    }
+
     return {
-      id: row.id,
-      productName: row.product_name,
-      store: row.store,
-      price: row.price,
-      savings: row.savings,
-      badge: row.badge,
-      description: row.description,
+id: 0,
+      productName: product.name,
+      store: store.name,
+      price: String(row.price),
+      savings: "0",
+      badge: "Fiyat Karşılaştırması",
+      description: `${product.name} ürünü ${store.name} mağazasında`,
     };
+  }
+
+  private getRelatedRow<T>(value: RelatedRow<T>): T | null {
+    if (!value) {
+      return null;
+    }
+
+    if (Array.isArray(value)) {
+      return value[0] ?? null;
+    }
+
+    return value;
   }
 }
