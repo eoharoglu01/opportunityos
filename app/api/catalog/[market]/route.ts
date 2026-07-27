@@ -6,6 +6,7 @@ import "../../../../src/services/catalog/collectors/SokCollectorService";
 import "../../../../src/services/catalog/collectors/BimCollectorService";
 import "../../../../src/services/catalog/collectors/A101CollectorService";
 import "../../../../src/services/catalog/collectors/TarimKrediCollectorService";
+import "../../../../src/services/catalog/collectors/BizimToptanCollectorService";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 import { collectorEngine } from "../../../../src/services/catalog/collectors/CollectorEngine";
 
@@ -64,6 +65,10 @@ const defaultSourceUrls: Record<string, string> = {
     "https://www.tkkoop.com.tr/urun-kategori/sut",
   "tarim-kredi":
     "https://www.tkkoop.com.tr/urun-kategori/sut",
+    bizimtoptan:
+  "https://www.bizimtoptan.com.tr/sutas",
+"bizim-toptan":
+  "https://www.bizimtoptan.com.tr/sutas",
 };
 
 const collectorMarket =
@@ -72,7 +77,10 @@ const collectorMarket =
     : normalizedMarket === "tarimkredi" ||
         normalizedMarket === "tarim-kredi"
       ? "tarım kredi"
-      : normalizedMarket;
+      : normalizedMarket === "bizimtoptan" ||
+          normalizedMarket === "bizim-toptan"
+        ? "bizim toptan"
+        : normalizedMarket;
 
   const sourceUrl =
     requestUrl.searchParams.get("sourceUrl") ??
