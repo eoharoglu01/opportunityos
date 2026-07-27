@@ -5,6 +5,7 @@ import "../../../../src/services/catalog/collectors/CarrefourCollectorService";
 import "../../../../src/services/catalog/collectors/SokCollectorService";
 import "../../../../src/services/catalog/collectors/BimCollectorService";
 import "../../../../src/services/catalog/collectors/A101CollectorService";
+import "../../../../src/services/catalog/collectors/TarimKrediCollectorService";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 import { collectorEngine } from "../../../../src/services/catalog/collectors/CollectorEngine";
 
@@ -48,22 +49,29 @@ export async function GET(
     .trim()
     .toLocaleLowerCase("tr-TR");
 
-  const defaultSourceUrls: Record<string, string> = {
-    sok: "https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460",
-    migros: "https://www.migros.com.tr/",
-    carrefour:
-      "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
-    carrefoursa:
-      "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
-      bim:
-  "https://www.bim.com.tr/categories/100/aktuel-urunler.aspx",
+const defaultSourceUrls: Record<string, string> = {
+  sok: "https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460",
+  migros: "https://www.migros.com.tr/",
+  carrefour:
+    "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
+  carrefoursa:
+    "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
+  bim:
+    "https://www.bim.com.tr/categories/100/aktuel-urunler.aspx",
   a101:
-  "https://www.a101.com.tr/market",
-  };
+    "https://www.a101.com.tr/kapida/sut-urunleri-kahvaltilik/sut",
+  tarimkredi:
+    "https://www.tkkoop.com.tr/urun-kategori/sut",
+  "tarim-kredi":
+    "https://www.tkkoop.com.tr/urun-kategori/sut",
+};
 
-  const collectorMarket =
-    normalizedMarket === "carrefour"
-      ? "carrefoursa"
+const collectorMarket =
+  normalizedMarket === "carrefour"
+    ? "carrefoursa"
+    : normalizedMarket === "tarimkredi" ||
+        normalizedMarket === "tarim-kredi"
+      ? "tarım kredi"
       : normalizedMarket;
 
   const sourceUrl =
