@@ -1,24 +1,20 @@
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
-export type PriceAlert = {
+export type Favorite = {
   id: number;
   user_id: string;
   product_id: string;
   product_name: string;
   store: string | null;
-  current_price: number | null;
-  target_price: number;
-  is_active: boolean;
+  price: number | null;
   created_at: string;
-  updated_at: string;
 };
 
-export type CreatePriceAlertInput = {
+export type AddFavoriteInput = {
   productId: string;
   productName: string;
   store?: string;
-  currentPrice?: number;
-  targetPrice: number;
+  price?: number;
 };
 
 type SupabaseErrorLike = {
@@ -44,7 +40,7 @@ function createServiceError(
   );
 }
 
-export class AlertService {
+export class FavoriteService {
   private getClient() {
     if (!supabase) {
       throw new Error(
@@ -67,7 +63,18 @@ export class AlertService {
       );
     }
 
-    const user = data.session?.user;
+    if (data.session?.user) {
+      return data.session.user;
+    }
+
+    const { data: refreshedData, error: refreshError } =
+      await client.auth.refreshSession();
+
+    if (refreshError) {
+      throw new Error("Bu işlem için yeniden giriş yapmalısınız.");
+    }
+
+    const user = refreshedData.session?.user;
 
     if (!user) {
       throw new Error("Bu işlem için giriş yapmalısınız.");
@@ -76,12 +83,12 @@ export class AlertService {
     return user;
   }
 
-  async getAlerts(): Promise<PriceAlert[]> {
+  async getFavorites(): Promise<Favorite[]> {
     const client = this.getClient();
     const user = await this.getAuthenticatedUser();
 
     const { data, error } = await client
-      .from("price_alerts")
+      .from("favorites")
       .select("*")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
@@ -89,37 +96,31 @@ export class AlertService {
     if (error) {
       throw createServiceError(
         error,
-        "Fiyat alarmları yüklenirken bir hata oluştu.",
+        "Favoriler yüklenirken bir hata oluştu.",
       );
     }
 
-    return (data ?? []) as PriceAlert[];
+    return (data ?? []) as Favorite[];
   }
 
-  async createAlert(
-    input: CreatePriceAlertInput,
-  ): Promise<PriceAlert> {
+  async addFavorite(input: AddFavoriteInput): Promise<Favorite> {
     const client = this.getClient();
     const user = await this.getAuthenticatedUser();
 
-    const alertData = {
+    const favoriteData = {
       user_id: user.id,
       product_id: String(input.productId),
       product_name: input.productName.trim(),
       store: input.store?.trim() || null,
-      current_price:
-        typeof input.currentPrice === "number" &&
-        Number.isFinite(input.currentPrice)
-          ? input.currentPrice
+      price:
+        typeof input.price === "number" && Number.isFinite(input.price)
+          ? input.price
           : null,
-      target_price: input.targetPrice,
-      is_active: true,
-      updated_at: new Date().toISOString(),
     };
 
     const { data, error } = await client
-      .from("price_alerts")
-      .upsert(alertData as never, {
+      .from("favorites")
+      .upsert(favoriteData as never, {
         onConflict: "user_id,product_id",
       })
       .select("*")
@@ -128,58 +129,70 @@ export class AlertService {
     if (error) {
       throw createServiceError(
         error,
-        "Fiyat alarmı oluşturulurken bir hata oluştu.",
+        "Ürün favorilere eklenirken bir hata oluştu.",
       );
     }
 
     if (!data) {
-      throw new Error("Fiyat alarmı oluşturulamadı.");
+      throw new Error("Favori kaydı oluşturulamadı.");
     }
 
-    return data as PriceAlert;
+    return data as Favorite;
   }
 
-  async updateAlertStatus(
-    alertId: number,
-    isActive: boolean,
-  ): Promise<void> {
+  async removeFavorite(productId: string): Promise<void> {
     const client = this.getClient();
     const user = await this.getAuthenticatedUser();
 
     const { error } = await client
-      .from("price_alerts")
-      .update({
-        is_active: isActive,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .eq("id", alertId)
-      .eq("user_id", user.id);
-
-    if (error) {
-      throw createServiceError(
-        error,
-        "Fiyat alarmı güncellenirken bir hata oluştu.",
-      );
-    }
-  }
-
-  async removeAlert(alertId: number): Promise<void> {
-    const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
-
-    const { error } = await client
-      .from("price_alerts")
+      .from("favorites")
       .delete()
-      .eq("id", alertId)
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .eq("product_id", String(productId));
 
     if (error) {
       throw createServiceError(
         error,
-        "Fiyat alarmı silinirken bir hata oluştu.",
+        "Ürün favorilerden kaldırılırken bir hata oluştu.",
       );
     }
+  }
+
+  async isFavorite(productId: string): Promise<boolean> {
+    const client = this.getClient();
+
+    const { data: sessionData, error: sessionError } =
+      await client.auth.getSession();
+
+    if (sessionError) {
+      throw createServiceError(
+        sessionError,
+        "Kullanıcı oturumu kontrol edilemedi.",
+      );
+    }
+
+    const user = sessionData.session?.user;
+
+    if (!user) {
+      return false;
+    }
+
+    const { data, error } = await client
+      .from("favorites")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("product_id", String(productId))
+      .maybeSingle();
+
+    if (error) {
+      throw createServiceError(
+        error,
+        "Favori durumu kontrol edilemedi.",
+      );
+    }
+
+    return Boolean(data);
   }
 }
 
-export const alertService = new AlertService();
+export const favoriteService = new FavoriteService();

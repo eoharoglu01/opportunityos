@@ -23,8 +23,13 @@ export function getSupabaseClient(): SupabaseClient<Database> | null {
 
   cachedClient = createClient<Database>(url, anonKey, {
     auth: {
-      persistSession: false,
-      autoRefreshToken: false,
+     persistSession: true,
+autoRefreshToken: true,
+detectSessionInUrl: true,
+storage:
+  typeof window !== "undefined"
+    ? window.localStorage
+    : undefined,
     },
   });
 

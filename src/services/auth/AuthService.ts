@@ -1,12 +1,31 @@
 import { supabase } from "../../lib/supabase";
 
+export type SignUpInput = {
+  email: string;
+  password: string;
+  fullName: string;
+};
+
+export type SignInInput = {
+  email: string;
+  password: string;
+};
+
 export class AuthService {
-  async getSession() {
+  private getClient() {
     if (!supabase) {
-      throw new Error("Supabase is not configured.");
+      throw new Error(
+        "Supabase yapılandırılmamış. .env.local dosyasındaki değerleri kontrol edin.",
+      );
     }
 
-    const { data, error } = await supabase.auth.getSession();
+    return supabase;
+  }
+
+  async getSession() {
+    const client = this.getClient();
+
+    const { data, error } = await client.auth.getSession();
 
     if (error) {
       throw error;
@@ -15,12 +34,16 @@ export class AuthService {
     return data.session;
   }
 
-  async signInAnonymously() {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
+  async getCurrentUser() {
+    const session = await this.getSession();
 
-    const { data, error } = await supabase.auth.signInAnonymously();
+    return session?.user ?? null;
+  }
+
+  async signInAnonymously() {
+    const client = this.getClient();
+
+    const { data, error } = await client.auth.signInAnonymously();
 
     if (error) {
       throw error;
@@ -28,4 +51,51 @@ export class AuthService {
 
     return data.user;
   }
+
+  async signUp({ email, password, fullName }: SignUpInput) {
+    const client = this.getClient();
+
+    const { data, error } = await client.auth.signUp({
+      email: email.trim().toLowerCase(),
+      password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+        },
+      },
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async signIn({ email, password }: SignInInput) {
+    const client = this.getClient();
+
+    const { data, error } = await client.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async signOut() {
+    const client = this.getClient();
+
+    const { error } = await client.auth.signOut();
+
+    if (error) {
+      throw error;
+    }
+  }
 }
+
+export const authService = new AuthService();

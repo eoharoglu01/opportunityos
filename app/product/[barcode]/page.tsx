@@ -48,50 +48,70 @@ export default function ProductDetailPage() {
   const [imageFailed, setImageFailed] = useState(false);
 
 useEffect(() => {
-  if (!barcode) {
-    setIsLoading(false);
-    setErrorMessage("Geçerli bir barkod bulunamadı.");
-    return;
-  }
-
   const controller = new AbortController();
 
   async function loadProduct() {
+    await Promise.resolve();
+
+    if (!barcode) {
+      setOffers([]);
+      setIsLoading(false);
+      setErrorMessage(
+        "Geçerli bir barkod bulunamadı.",
+      );
+      return;
+    }
+
     try {
       setIsLoading(true);
       setErrorMessage("");
 
       const response = await fetch(
-        `/api/search?query=${encodeURIComponent(barcode)}`,
+        `/api/search?query=${encodeURIComponent(
+          barcode,
+        )}`,
         {
           signal: controller.signal,
           cache: "no-store",
         },
       );
 
-      const result = (await response.json()) as SearchResponse;
+      const result =
+        (await response.json()) as SearchResponse;
 
       if (!response.ok || !result.success) {
         throw new Error(
-          result.error || "Ürün bilgileri yüklenirken hata oluştu.",
+          result.error ||
+            "Ürün bilgileri yüklenirken hata oluştu.",
         );
       }
 
-      const sortedOffers = [...(result.data ?? [])].sort(
-        (a, b) => Number(a.price) - Number(b.price),
+      const sortedOffers = [
+        ...(result.data ?? []),
+      ].sort(
+        (a, b) =>
+          Number(a.price) - Number(b.price),
       );
 
       setOffers(sortedOffers);
 
       if (sortedOffers.length === 0) {
-        setErrorMessage("Bu barkoda ait ürün veya fiyat bulunamadı.");
+        setErrorMessage(
+          "Bu barkoda ait ürün veya fiyat bulunamadı.",
+        );
       }
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        error.name === "AbortError"
+      ) {
         return;
       }
 
-      console.error("Ürün detayı yükleme hatası:", error);
+      console.error(
+        "Ürün detayı yükleme hatası:",
+        error,
+      );
 
       setOffers([]);
       setErrorMessage(
@@ -100,7 +120,9 @@ useEffect(() => {
           : "Ürün bilgileri yüklenirken beklenmeyen bir hata oluştu.",
       );
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -112,52 +134,64 @@ useEffect(() => {
 }, [barcode]);
 
   useEffect(() => {
-    if (!barcode) return;
+  const controller = new AbortController();
 
-    const controller = new AbortController();
+  async function loadProductImage() {
+    await Promise.resolve();
 
-    async function loadProductImage() {
-      try {
-        setProductImageUrl("");
-        setImageFailed(false);
-
-        const response = await fetch(
-          `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(
-            barcode,
-          )}.json?fields=image_front_url,image_url`,
-          {
-            signal: controller.signal,
-          },
-        );
-
-        if (!response.ok) return;
-
-        const result = (await response.json()) as OpenFoodFactsResponse;
-
-        const imageUrl =
-          result.product?.image_front_url ?? result.product?.image_url ?? "";
-
-        if (!controller.signal.aborted) {
-          setProductImageUrl(imageUrl);
-        }
-      } catch (error) {
-       if (
-  error instanceof Error &&
-  error.name === "AbortError"
-) {
-  return;
-}
-
-        console.error("Ürün görseli yükleme hatası:", error);
-      }
+    if (!barcode || controller.signal.aborted) {
+      return;
     }
 
-    void loadProductImage();
+    setProductImageUrl("");
+    setImageFailed(false);
 
-    return () => {
-      controller.abort();
-    };
-  }, [barcode]);
+    try {
+      const response = await fetch(
+        `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(
+          barcode,
+        )}.json?fields=image_front_url,image_url`,
+        {
+          signal: controller.signal,
+        },
+      );
+
+      if (!response.ok || controller.signal.aborted) {
+        return;
+      }
+
+      const result =
+        (await response.json()) as OpenFoodFactsResponse;
+
+      const imageUrl =
+        result.product?.image_front_url ??
+        result.product?.image_url ??
+        "";
+
+      if (!controller.signal.aborted) {
+        setProductImageUrl(imageUrl);
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        error.name === "AbortError"
+      ) {
+        return;
+      }
+
+      console.error(
+        "Ürün görseli yükleme hatası:",
+        error,
+      );
+    }
+  }
+
+  void loadProductImage();
+
+  return () => {
+    controller.abort();
+  };
+}, [barcode]);
 
   const productSummary = useMemo(() => {
     if (offers.length === 0) return null;
