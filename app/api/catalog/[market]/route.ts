@@ -4,6 +4,7 @@ import "../../../../src/services/catalog/MigrosCollectorService";
 import "../../../../src/services/catalog/collectors/CarrefourCollectorService";
 import "../../../../src/services/catalog/collectors/SokCollectorService";
 import "../../../../src/services/catalog/collectors/BimCollectorService";
+import "../../../../src/services/catalog/collectors/A101CollectorService";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 import { collectorEngine } from "../../../../src/services/catalog/collectors/CollectorEngine";
 
@@ -56,6 +57,8 @@ export async function GET(
       "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
       bim:
   "https://www.bim.com.tr/categories/100/aktuel-urunler.aspx",
+  a101:
+  "https://www.a101.com.tr/market",
   };
 
   const collectorMarket =

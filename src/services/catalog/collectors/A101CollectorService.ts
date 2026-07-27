@@ -146,9 +146,15 @@ async function extractProducts(
 
   const rawProducts = await page.evaluate(
     (limit) => {
+      const candidateLimit = Math.max(limit * 10, 50);
+
       const links = Array.from(
         document.querySelectorAll<HTMLAnchorElement>(
-          'a[href*="/kapida/"][href*="/p-"], a[href*="/kapida/"][href*="-p-"], a[href*="/kapida/urun/"]',
+          [
+            'a[href*="/kapida/"][href*="_p-"]',
+            'a[href*="/kapida/"][href*="-p-"]',
+            'a[href*="/kapida/urun/"]',
+          ].join(","),
         ),
       );
 
@@ -162,16 +168,25 @@ async function extractProducts(
       >();
 
       for (const link of links) {
-        if (results.size >= limit) {
+        if (results.size >= candidateLimit) {
           break;
         }
 
+        const href = link.getAttribute("href");
+
+        if (!href) {
+          continue;
+        }
+
         const sourceUrl = new URL(
-          link.href,
+          href,
           window.location.origin,
         ).toString();
 
-        if (results.has(sourceUrl)) {
+        if (
+          !sourceUrl.includes("a101.com.tr/kapida/") ||
+          results.has(sourceUrl)
+        ) {
           continue;
         }
 
@@ -179,22 +194,85 @@ async function extractProducts(
           link.closest("article") ??
           link.closest("li") ??
           link.closest(
-            '[class*="product"], [class*="Product"]',
+            [
+              '[class*="product-card"]',
+              '[class*="productCard"]',
+              '[class*="ProductCard"]',
+              '[class*="product-item"]',
+              '[class*="productItem"]',
+              '[class*="product"]',
+              '[class*="Product"]',
+            ].join(","),
           ) ??
+          link.parentElement?.parentElement ??
           link.parentElement;
 
-        const productName =
-          link.getAttribute("title") ??
-          link.getAttribute("aria-label") ??
+        if (!card) {
+          continue;
+        }
+
+        const imageAlt =
           link
-            .querySelector("img")
+            .querySelector<HTMLImageElement>("img")
             ?.getAttribute("alt") ??
-          link.textContent ??
+          card
+            .querySelector<HTMLImageElement>("img")
+            ?.getAttribute("alt") ??
           "";
+
+        const nameElement =
+          card.querySelector<HTMLElement>(
+            [
+              '[class*="product-name"]',
+              '[class*="productName"]',
+              '[class*="ProductName"]',
+              '[class*="name"]',
+              "h2",
+              "h3",
+            ].join(","),
+          );
+
+        const productName =
+          imageAlt ||
+          link.getAttribute("title") ||
+          link.getAttribute("aria-label") ||
+          nameElement?.textContent ||
+          link.textContent ||
+          "";
+
+        const priceElements = Array.from(
+          card.querySelectorAll<HTMLElement>(
+            [
+              '[class*="price"]',
+              '[class*="Price"]',
+              '[data-testid*="price"]',
+              '[itemprop="price"]',
+            ].join(","),
+          ),
+        );
+
+        const priceText = [
+          ...priceElements.map(
+            (element) =>
+              element.getAttribute("content") ??
+              element.textContent ??
+              "",
+          ),
+          card.textContent ?? "",
+        ].join(" ");
+
+        if (
+          !productName.trim() ||
+          !/(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/i.test(
+            priceText,
+          )
+        ) {
+          continue;
+        }
 
         results.set(sourceUrl, {
           productName,
-          priceText: card?.textContent ?? "",
+          priceText,
           sourceUrl,
         });
       }
@@ -207,6 +285,10 @@ async function extractProducts(
   const products: CollectedCatalogProduct[] = [];
 
   for (const rawProduct of rawProducts) {
+    if (products.length >= maximumProductCount) {
+      break;
+    }
+
     const productName = normalizeWhitespace(
       rawProduct.productName,
     );
