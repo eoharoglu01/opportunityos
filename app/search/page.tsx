@@ -58,18 +58,20 @@ type CatalogSummary = {
   currency: string;
 };
 
-type CatalogAllResponse = {
+type SearchApiProduct = {
+  id: number | string;
+  productName: string;
+  store: string;
+  price: string | number;
+  savings?: string | number;
+  badge?: string;
+  description?: string;
+};
+
+type SearchApiResponse = {
   success: boolean;
-  summary?: CatalogSummary;
-  groupedProducts?: CatalogProductGroup[];
-  marketResults?: Array<{
-    market: string;
-    storeName?: string;
-    success: boolean;
-    collectedCount: number;
-    httpStatus: number;
-    errors: string[];
-  }>;
+  data?: SearchApiProduct[];
+  error?: string;
 };
 
 function formatPrice(
@@ -110,7 +112,191 @@ function normalizeSearchText(value: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+function getStoreUrl(storeName: string): string {
+  const normalizedStore =
+    normalizeSearchText(storeName);
 
+  const storeUrls: Record<string, string> = {
+    a101: "https://www.a101.com.tr/",
+    bim: "https://www.bim.com.tr/",
+    sok: "https://www.sokmarket.com.tr/",
+    migros: "https://www.migros.com.tr/",
+    carrefoursa: "https://www.carrefoursa.com/",
+    "tarim kredi": "https://www.tkkoperatif.com.tr/",
+    "happy center": "https://www.happycenter.com.tr/",
+    "bizim toptan": "https://www.bizimtoptan.com.tr/",
+    "hakmar express":
+      "https://www.hakmarexpress.com.tr/",
+    "onur market":
+      "https://www.onurmarket.com/",
+    "kim market":
+      "https://www.kimmarket.com/",
+  };
+
+  return storeUrls[normalizedStore] ?? "/";
+}
+
+function convertSearchProductsToGroups(
+  products: SearchApiProduct[],
+): CatalogProductGroup[] {
+  const groupMap = new Map<
+    string,
+    CatalogOffer[]
+  >();
+
+  for (const product of products) {
+    const price = Number(product.price);
+
+    if (
+      !product.productName?.trim() ||
+      !product.store?.trim() ||
+      !Number.isFinite(price) ||
+      price <= 0
+    ) {
+      continue;
+    }
+
+    const normalizedName =
+      normalizeSearchText(product.productName);
+
+    if (!normalizedName) {
+      continue;
+    }
+
+    const offer: CatalogOffer = {
+      storeName: product.store.trim(),
+      productName: product.productName.trim(),
+      price,
+      currency: "TRY",
+      sourceUrl: getStoreUrl(product.store),
+      collectedAt: new Date().toISOString(),
+      badge: product.badge ?? null,
+    };
+
+    const existingOffers =
+      groupMap.get(normalizedName) ?? [];
+
+    existingOffers.push(offer);
+    groupMap.set(normalizedName, existingOffers);
+  }
+
+  return Array.from(groupMap.entries())
+    .map(([normalizedName, rawOffers]) => {
+      const offers = [...rawOffers].sort(
+        (firstOffer, secondOffer) =>
+          firstOffer.price -
+          secondOffer.price,
+      );
+
+      const cheapestPrice =
+        offers[0]?.price ?? 0;
+
+      const highestPrice =
+        offers.at(-1)?.price ??
+        cheapestPrice;
+
+      const maximumSavings = Math.max(
+        highestPrice - cheapestPrice,
+        0,
+      );
+
+      const storeCount = new Set(
+        offers.map((offer) =>
+          normalizeSearchText(
+            offer.storeName,
+          ),
+        ),
+      ).size;
+
+      const preparedOffers =
+        offers.map((offer, index) => {
+          const priceDifference =
+            Math.max(
+              offer.price -
+                cheapestPrice,
+              0,
+            );
+
+          const priceDifferencePercentage =
+            cheapestPrice > 0
+              ? Number(
+                  (
+                    (priceDifference /
+                      cheapestPrice) *
+                    100
+                  ).toFixed(2),
+                )
+              : 0;
+
+          return {
+            ...offer,
+            rank: index + 1,
+            isCheapest: index === 0,
+            priceDifference,
+            priceDifferencePercentage,
+          };
+        });
+
+      const cheapestOffer =
+        preparedOffers[0];
+
+      return {
+        normalizedName,
+        productName:
+          cheapestOffer.productName,
+        badge:
+          cheapestOffer.badge ??
+          undefined,
+        cheapestOffer,
+        cheapestPrice,
+        highestPrice,
+        maximumSavings,
+        savingsPercentage:
+          highestPrice > 0
+            ? Number(
+                (
+                  (maximumSavings /
+                    highestPrice) *
+                  100
+                ).toFixed(2),
+              )
+            : 0,
+        offerCount:
+          preparedOffers.length,
+        storeCount,
+        isComparable:
+          storeCount > 1,
+        offers: preparedOffers,
+      };
+    })
+    .sort(
+      (firstGroup, secondGroup) => {
+        if (
+          firstGroup.isComparable !==
+          secondGroup.isComparable
+        ) {
+          return firstGroup.isComparable
+            ? -1
+            : 1;
+        }
+
+        if (
+          secondGroup.maximumSavings !==
+          firstGroup.maximumSavings
+        ) {
+          return (
+            secondGroup.maximumSavings -
+            firstGroup.maximumSavings
+          );
+        }
+
+        return (
+          firstGroup.cheapestPrice -
+          secondGroup.cheapestPrice
+        );
+      },
+    );
+}
 function createProductId(
   group: CatalogProductGroup,
 ): string {
@@ -241,147 +427,146 @@ function SearchPageContent() {
   useEffect(() => {
     let cancelled = false;
 
-    async function searchCatalog() {
-      setQuery(currentQuery);
-      setFavoriteMessage("");
-      setAlertMessage("");
-      setTargetPrices({});
+async function searchCatalog() {
+  setQuery(currentQuery);
+  setFavoriteMessage("");
+  setAlertMessage("");
+  setTargetPrices({});
 
-      if (!currentQuery) {
-        setGroups([]);
-        setSummary(null);
-        setStatus(
-          "Aramak istediğiniz ürünü yazın.",
-        );
-        setIsLoading(false);
-        return;
-      }
+  if (!currentQuery) {
+    setGroups([]);
+    setSummary(null);
+    setStatus(
+      "Aramak istediğiniz ürünü yazın.",
+    );
+    setIsLoading(false);
+    return;
+  }
 
-      try {
-        setIsLoading(true);
-        setStatus(
-          "Çalışan marketlerde güncel fiyatlar aranıyor...",
-        );
+  try {
+    setIsLoading(true);
+    setStatus(
+      "Kayıtlı market fiyatları aranıyor...",
+    );
 
-        const response = await fetch(
-          "/api/catalog/all?maximumProductCount=20",
-          {
-            cache: "no-store",
-          },
-        );
+    const response = await fetch(
+      `/api/search?query=${encodeURIComponent(
+        currentQuery,
+      )}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      },
+    );
 
-        const result =
-          (await response.json()) as CatalogAllResponse;
+    const result =
+      (await response.json()) as SearchApiResponse;
 
-        if (!response.ok || !result.success) {
-          throw new Error(
-            "Market fiyatları alınamadı.",
-          );
-        }
-
-        if (cancelled) {
-          return;
-        }
-
-        const normalizedQuery =
-          normalizeSearchText(currentQuery);
-
-        const queryTokens =
-          normalizedQuery
-            .split(" ")
-            .filter(Boolean);
-
-        const filteredGroups = [
-          ...(result.groupedProducts ?? []),
-        ]
-          .filter((group) => {
-            const searchableText =
-              normalizeSearchText(
-                [
-                  group.productName,
-                  group.normalizedName,
-                  ...group.offers.map(
-                    (offer) =>
-                      [
-                        offer.productName,
-                        offer.brand ?? "",
-                        offer.barcode ?? "",
-                        offer.storeName,
-                      ].join(" "),
-                  ),
-                ].join(" "),
-              );
-
-            return queryTokens.every(
-              (token) =>
-                searchableText.includes(token),
-            );
-          })
-          .sort((firstGroup, secondGroup) => {
-            if (
-              firstGroup.isComparable !==
-              secondGroup.isComparable
-            ) {
-              return firstGroup.isComparable
-                ? -1
-                : 1;
-            }
-
-            if (
-              secondGroup.maximumSavings !==
-              firstGroup.maximumSavings
-            ) {
-              return (
-                secondGroup.maximumSavings -
-                firstGroup.maximumSavings
-              );
-            }
-
-            return (
-              firstGroup.cheapestPrice -
-              secondGroup.cheapestPrice
-            );
-          });
-
-        setGroups(filteredGroups);
-        setSummary(result.summary ?? null);
-
-        const totalOfferCount =
-          filteredGroups.reduce(
-            (total, group) =>
-              total + group.offers.length,
-            0,
-          );
-
-        setStatus(
-          filteredGroups.length === 0
-            ? `"${currentQuery}" için sonuç bulunamadı.`
-            : `${filteredGroups.length} ürün grubu ve ${totalOfferCount} market fiyatı bulundu.`,
-        );
-      } catch (error: unknown) {
-        console.error(
-          "Katalog arama hatası:",
-          error,
-        );
-
-        if (cancelled) {
-          return;
-        }
-
-        setGroups([]);
-        setSummary(null);
-
-        setStatus(
-          error instanceof Error
-            ? error.message
-            : "Arama sırasında beklenmeyen bir hata oluştu.",
-        );
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.error ||
+          "Market fiyatları alınamadı.",
+      );
     }
+
+    if (cancelled) {
+      return;
+    }
+
+    const products = Array.isArray(
+      result.data,
+    )
+      ? result.data
+      : [];
+
+    const convertedGroups =
+      convertSearchProductsToGroups(
+        products,
+      );
+
+    const marketNames = new Set(
+      products
+        .map((product) =>
+          product.store?.trim(),
+        )
+        .filter(
+          (
+            storeName,
+          ): storeName is string =>
+            Boolean(storeName),
+        ),
+    );
+
+    const comparableProductGroups =
+      convertedGroups.filter(
+        (group) =>
+          group.isComparable,
+      ).length;
+
+    const totalPotentialSavings =
+      convertedGroups.reduce(
+        (total, group) =>
+          total +
+          group.maximumSavings,
+        0,
+      );
+
+    const nextSummary: CatalogSummary = {
+      totalMarkets: marketNames.size,
+      successfulMarkets:
+        marketNames.size,
+      failedMarkets: 0,
+      totalProducts: products.length,
+      totalProductGroups:
+        convertedGroups.length,
+      comparableProductGroups,
+      totalPotentialSavings,
+      currency: "TRY",
+    };
+
+    setGroups(convertedGroups);
+    setSummary(nextSummary);
+
+    const totalOfferCount =
+      convertedGroups.reduce(
+        (total, group) =>
+          total +
+          group.offers.length,
+        0,
+      );
+
+    setStatus(
+      convertedGroups.length === 0
+        ? `"${currentQuery}" için sonuç bulunamadı.`
+        : `${convertedGroups.length} ürün grubu ve ${totalOfferCount} market fiyatı bulundu.`,
+    );
+  } catch (error: unknown) {
+    console.error(
+      "Katalog arama hatası:",
+      error,
+    );
+
+    if (cancelled) {
+      return;
+    }
+
+    setGroups([]);
+    setSummary(null);
+
+    setStatus(
+      error instanceof Error
+        ? error.message
+        : "Arama sırasında beklenmeyen bir hata oluştu.",
+    );
+  } finally {
+    if (!cancelled) {
+      setIsLoading(false);
+    }
+  }
+}
 
     void searchCatalog();
 
