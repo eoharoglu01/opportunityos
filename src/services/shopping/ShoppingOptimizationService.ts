@@ -600,7 +600,92 @@ function createOptimizedItem(
       ),
   };
 }
+function createOptimizedItemForStore(
+  inputItem: OptimizationInputItem,
+  match: MatchResult,
+  requestedStoreName: string,
+): OptimizedBasketItem | null {
+  const offers = getValidOffers(match.group);
 
+  const selectedOffer = offers.find(
+    (offer) =>
+      normalizeText(offer.storeName) ===
+      normalizeText(requestedStoreName),
+  );
+
+  if (!selectedOffer) {
+    return null;
+  }
+
+  const highestPrice =
+    offers[offers.length - 1]?.price ??
+    selectedOffer.price;
+
+  const quantity = Number(inputItem.quantity);
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  const totalPrice =
+    selectedOffer.price * quantity;
+
+  return {
+    shoppingItemId: inputItem.id,
+    requestedProductName:
+      inputItem.productName,
+    matchedProductName:
+      match.group.productName,
+    quantity,
+    unit: inputItem.unit,
+
+    storeId: normalizeText(
+      selectedOffer.storeName,
+    ),
+    storeName:
+      selectedOffer.storeName,
+
+    unitPrice:
+      roundMoney(selectedOffer.price),
+    totalPrice:
+      roundMoney(totalPrice),
+
+    currency:
+      selectedOffer.currency || "TRY",
+
+    barcode:
+      selectedOffer.barcode ??
+      match.group.barcode ??
+      inputItem.barcode ??
+      null,
+
+    brand:
+      selectedOffer.brand ??
+      match.group.brand ??
+      null,
+
+    sourceUrl:
+      selectedOffer.sourceUrl,
+
+    matchScore: match.score,
+    matchMethod: match.method,
+
+    availableStoreCount:
+      offers.length,
+
+    priceDifferenceFromHighest:
+      roundMoney(
+        Math.max(
+          highestPrice -
+            selectedOffer.price,
+          0,
+        ) * quantity,
+      ),
+  };
+}
 function groupItemsByStore(
   items: OptimizedBasketItem[],
 ): StoreBasketGroup[] {
@@ -949,22 +1034,61 @@ export const shoppingOptimizationService = {
       );
 
     const singleStoreTotal =
-      cheapestCompleteSingleStore?.total ??
-      total;
+  cheapestCompleteSingleStore?.total ??
+  0;
 
-    const savings = roundMoney(
-      Math.max(
-        singleStoreTotal - total,
-        0,
-      ),
-    );
+const savings =
+  cheapestCompleteSingleStore
+    ? roundMoney(
+        Math.max(
+          singleStoreTotal - total,
+          0,
+        ),
+      )
+    : 0;
+
+
 const shouldPreferSingleStore =
   Boolean(cheapestCompleteSingleStore) &&
   savings <= 0;
 
-const finalOptimizedItems = optimizedItems;
-const finalStoreGroups = storeGroups;
-const finalTotal = total;
+const finalOptimizedItems =
+  shouldPreferSingleStore &&
+  cheapestCompleteSingleStore
+    ? validInputItems
+        .map((inputItem) => {
+          const match = matches.get(
+            inputItem.id,
+          );
+
+          if (!match) {
+            return null;
+          }
+
+          return createOptimizedItemForStore(
+            inputItem,
+            match,
+            cheapestCompleteSingleStore.storeName,
+          );
+        })
+        .filter(
+          (
+            item,
+          ): item is OptimizedBasketItem =>
+            item !== null,
+        )
+    : optimizedItems;
+
+const finalStoreGroups =
+  groupItemsByStore(finalOptimizedItems);
+
+const finalTotal = roundMoney(
+  finalOptimizedItems.reduce(
+    (sum, item) =>
+      sum + item.totalPrice,
+    0,
+  ),
+);
     const balancedPlan =
   createBalancedPlan(
     finalOptimizedItems,

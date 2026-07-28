@@ -626,9 +626,11 @@ export default function ShoppingOptimizationResult({
               fontSize: "18px",
             }}
           >
-            {formatCurrency(
-              result.singleStoreTotal,
-            )}
+           {result.singleStoreTotal > 0
+  ? formatCurrency(
+      result.singleStoreTotal,
+    )
+  : "Tüm ürünler tek markette yok"}
           </strong>
         </div>
 

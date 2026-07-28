@@ -1,4 +1,8 @@
-import { chromium, type Page } from "playwright";
+import {
+  chromium,
+  type BrowserContext,
+  type Page,
+} from "playwright";
 
 import type {
   CollectedCatalogProduct,
@@ -9,29 +13,69 @@ import type {
 
 import { collectorEngine } from "./CollectorEngine";
 
-function normalizeWhitespace(value: string): string {
+const HAPPY_CENTER_HOSTS = new Set([
+  "www.happycenter.com.tr",
+  "happycenter.com.tr",
+]);
+
+const DEFAULT_SEARCH_TERMS = [
+  "ekmek",
+  "tost ekmek",
+  "süt",
+  "su",
+  "yoğurt",
+  "yumurta",
+  "peynir",
+  "ayçiçek yağı",
+  "zeytinyağı",
+  "makarna",
+  "pirinç",
+  "bulgur",
+  "un",
+  "şeker",
+  "çay",
+  "kahve",
+];
+
+function normalizeWhitespace(
+  value: string,
+): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function normalizeHappyCenterUrl(value: string): string {
+function normalizeHappyCenterUrl(
+  value: string,
+): string {
   const url = new URL(value);
 
-  if (
-    url.hostname !== "www.happycenter.com.tr" &&
-    url.hostname !== "happycenter.com.tr"
-  ) {
+  if (!HAPPY_CENTER_HOSTS.has(url.hostname)) {
     throw new Error(
       "Yalnızca happycenter.com.tr adreslerinden veri toplanabilir.",
     );
   }
 
   url.protocol = "https:";
+  url.hostname = "www.happycenter.com.tr";
   url.hash = "";
 
   return url.toString();
 }
 
-function parseTurkishPrice(value: string): number | null {
+function createSearchUrl(
+  searchTerm: string,
+): string {
+  const url = new URL(
+    "https://www.happycenter.com.tr/Product/Search/",
+  );
+
+  url.searchParams.set("ara", searchTerm);
+
+  return url.toString();
+}
+
+function parseTurkishPrice(
+  value: string,
+): number | null {
   const match = value.match(
     /(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/i,
   );
@@ -43,7 +87,9 @@ function parseTurkishPrice(value: string): number | null {
   const rawValue = match[1];
 
   const normalizedValue = rawValue.includes(",")
-    ? rawValue.replace(/\./g, "").replace(",", ".")
+    ? rawValue
+        .replace(/\./g, "")
+        .replace(",", ".")
     : rawValue.replace(/\./g, "");
 
   const price = Number(normalizedValue);
@@ -56,14 +102,61 @@ function parseTurkishPrice(value: string): number | null {
 function guessBrand(
   productName: string,
 ): string | undefined {
-  const firstWord =
-    normalizeWhitespace(productName).split(" ")[0];
+  const normalizedName =
+    normalizeWhitespace(productName);
 
-  if (!firstWord || firstWord.length < 2) {
+  const firstWord =
+    normalizedName.split(" ")[0];
+
+  if (
+    !firstWord ||
+    firstWord.length < 2
+  ) {
+    return undefined;
+  }
+
+  const genericFirstWords = new Set([
+    "ekmek",
+    "süt",
+    "su",
+    "yoğurt",
+    "yumurta",
+    "peynir",
+    "makarna",
+    "pirinç",
+    "bulgur",
+    "un",
+    "şeker",
+    "çay",
+    "kahve",
+  ]);
+
+  if (
+    genericFirstWords.has(
+      firstWord.toLocaleLowerCase("tr-TR"),
+    )
+  ) {
     return undefined;
   }
 
   return firstWord;
+}
+
+function createProductKey(
+  product: Pick<
+    CollectedCatalogProduct,
+    "productName" | "price" | "storeName"
+  >,
+): string {
+  return [
+    product.storeName,
+    normalizeWhitespace(
+      product.productName,
+    ),
+    product.price.toFixed(2),
+  ]
+    .join("|")
+    .toLocaleLowerCase("tr-TR");
 }
 
 async function acceptCookies(
@@ -81,8 +174,15 @@ async function acceptCookies(
       .getByRole("button", { name })
       .first();
 
-    if (await button.isVisible().catch(() => false)) {
-      await button.click().catch(() => undefined);
+    if (
+      await button
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await button
+        .click()
+        .catch(() => undefined);
+
       return;
     }
   }
@@ -100,10 +200,18 @@ async function closePopups(
   ];
 
   for (const selector of selectors) {
-    const button = page.locator(selector).first();
+    const button = page
+      .locator(selector)
+      .first();
 
-    if (await button.isVisible().catch(() => false)) {
-      await button.click().catch(() => undefined);
+    if (
+      await button
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await button
+        .click()
+        .catch(() => undefined);
     }
   }
 
@@ -117,16 +225,25 @@ async function scrollPage(
   delayMs: number,
 ): Promise<void> {
   let previousHeight = 0;
+  let stableAttempts = 0;
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const currentHeight = await page.evaluate(
-      () => document.body.scrollHeight,
-    );
+  for (
+    let attempt = 0;
+    attempt < 12;
+    attempt += 1
+  ) {
+    const currentHeight =
+      await page.evaluate(
+        () => document.body.scrollHeight,
+      );
 
-    if (
-      currentHeight === previousHeight &&
-      attempt > 1
-    ) {
+    if (currentHeight === previousHeight) {
+      stableAttempts += 1;
+    } else {
+      stableAttempts = 0;
+    }
+
+    if (stableAttempts >= 2) {
       break;
     }
 
@@ -154,134 +271,172 @@ async function extractProducts(
   page: Page,
   maximumProductCount: number,
 ): Promise<CollectedCatalogProduct[]> {
-  const collectedAt = new Date().toISOString();
+  const collectedAt =
+    new Date().toISOString();
 
-  const rawProducts = await page.evaluate(
-    (limit) => {
-      const lines = (
-        document.body.innerText ??
-        document.body.textContent ??
-        ""
-      )
-        .split("\n")
-        .map((line) =>
-          line.replace(/\s+/g, " ").trim(),
+  const rawProducts =
+    await page.evaluate(
+      (limit) => {
+        const lines = (
+          document.body.innerText ??
+          document.body.textContent ??
+          ""
         )
-        .filter(Boolean);
+          .split("\n")
+          .map((line) =>
+            line
+              .replace(/\s+/g, " ")
+              .trim(),
+          )
+          .filter(Boolean);
 
-      const pricePattern =
-        /^\d{1,7}(?:\.\d{3})*,\d{2}\s*(?:TL|₺)$/i;
+        const pricePattern =
+          /^\d{1,7}(?:\.\d{3})*,\d{2}\s*(?:TL|₺)$/i;
 
-      const ignoredTexts = new Set([
-        "Şube Seçiniz",
-        "Sepete eklendi",
-        "Sepetim",
-        "Giriş Yap",
-        "Üye Ol",
-        "Kategoriler",
-        "Reyon Seçiniz",
-        "Marka Seçiniz",
-        "Alışveriş Listeme Ekle",
-        "Favorilere Ekle",
-        "Ürünler",
-        "Ana Sayfa",
-      ]);
+        const ignoredTexts = new Set([
+          "Şube Seçiniz",
+          "Sepete eklendi",
+          "Sepetim",
+          "Giriş Yap",
+          "Üye Ol",
+          "Kategoriler",
+          "Reyon Seçiniz",
+          "Marka Seçiniz",
+          "Alışveriş Listeme Ekle",
+          "Favorilere Ekle",
+          "Ürünler",
+          "Ana Sayfa",
+          "Stokta Yok",
+          "Detay",
+          "İncele",
+        ]);
 
-      const results: Array<{
-        productName: string;
-        priceText: string;
-        sourceUrl: string;
-      }> = [];
+        const results: Array<{
+          productName: string;
+          priceText: string;
+          sourceUrl: string;
+        }> = [];
 
-      const seen = new Set<string>();
-
-      for (
-        let index = 1;
-        index < lines.length;
-        index += 1
-      ) {
-        if (results.length >= limit) {
-          break;
-        }
-
-        const priceText = lines[index];
-
-        if (!pricePattern.test(priceText)) {
-          continue;
-        }
-
-        let productName = "";
+        const seen = new Set<string>();
 
         for (
-          let offset = 1;
-          offset <= 4;
-          offset += 1
+          let index = 1;
+          index < lines.length;
+          index += 1
         ) {
-          const candidate =
-            lines[index - offset] ?? "";
+          if (
+            results.length >= limit
+          ) {
+            break;
+          }
+
+          const priceText =
+            lines[index];
 
           if (
-            !candidate ||
-            candidate.length < 3 ||
-            ignoredTexts.has(candidate) ||
-            pricePattern.test(candidate) ||
-            /^\d+(?:[.,]\d+)?$/.test(candidate)
+            !pricePattern.test(
+              priceText,
+            )
           ) {
             continue;
           }
 
-          productName = candidate;
-          break;
+          let productName = "";
+
+          for (
+            let offset = 1;
+            offset <= 6;
+            offset += 1
+          ) {
+            const candidate =
+              lines[index - offset] ??
+              "";
+
+            if (
+              !candidate ||
+              candidate.length < 3 ||
+              ignoredTexts.has(
+                candidate,
+              ) ||
+              pricePattern.test(
+                candidate,
+              ) ||
+              /^\d+(?:[.,]\d+)?$/.test(
+                candidate,
+              ) ||
+              candidate.length > 180
+            ) {
+              continue;
+            }
+
+            productName =
+              candidate;
+
+            break;
+          }
+
+          if (!productName) {
+            continue;
+          }
+
+          const uniqueKey =
+            `${productName}|${priceText}`
+              .toLocaleLowerCase(
+                "tr-TR",
+              );
+
+          if (
+            seen.has(uniqueKey)
+          ) {
+            continue;
+          }
+
+          seen.add(uniqueKey);
+
+          results.push({
+            productName,
+            priceText,
+            sourceUrl:
+              window.location.href,
+          });
         }
 
-        if (!productName) {
-          continue;
-        }
+        return results;
+      },
+      maximumProductCount,
+    );
 
-        const uniqueKey =
-          `${productName}|${priceText}`
-            .toLocaleLowerCase("tr-TR");
-
-        if (seen.has(uniqueKey)) {
-          continue;
-        }
-
-        seen.add(uniqueKey);
-
-        results.push({
-          productName,
-          priceText,
-          sourceUrl: window.location.href,
-        });
-      }
-
-      return results;
-    },
-    maximumProductCount,
-  );
-
-  const products: CollectedCatalogProduct[] = [];
+  const products:
+    CollectedCatalogProduct[] = [];
 
   for (const rawProduct of rawProducts) {
-    const productName = normalizeWhitespace(
-      rawProduct.productName,
-    );
+    const productName =
+      normalizeWhitespace(
+        rawProduct.productName,
+      );
 
-    const price = parseTurkishPrice(
-      rawProduct.priceText,
-    );
+    const price =
+      parseTurkishPrice(
+        rawProduct.priceText,
+      );
 
-    if (!productName || price === null) {
+    if (
+      !productName ||
+      price === null
+    ) {
       continue;
     }
 
     products.push({
-      storeName: "Happy Center",
+      storeName:
+        "Happy Center",
       productName,
-      brand: guessBrand(productName),
+      brand:
+        guessBrand(productName),
       price,
       currency: "TRY",
-      sourceUrl: rawProduct.sourceUrl,
+      sourceUrl:
+        rawProduct.sourceUrl,
       collectedAt,
     });
   }
@@ -289,79 +444,211 @@ async function extractProducts(
   return products;
 }
 
+async function collectFromPage(
+  context: BrowserContext,
+  sourceUrl: string,
+  maximumProductCount: number,
+  delayMs: number,
+): Promise<
+  CollectedCatalogProduct[]
+> {
+  const page =
+    await context.newPage();
+
+  try {
+    await page.goto(sourceUrl, {
+      waitUntil:
+        "domcontentloaded",
+      timeout: 60_000,
+    });
+
+    await acceptCookies(page);
+    await closePopups(page);
+
+    await page.waitForTimeout(
+      1_500,
+    );
+
+    await scrollPage(
+      page,
+      delayMs,
+    );
+
+    return await extractProducts(
+      page,
+      maximumProductCount,
+    );
+  } finally {
+    await page.close();
+  }
+}
+
+function shouldCollectSearchPages(
+  sourceUrl: string,
+): boolean {
+  const url = new URL(sourceUrl);
+
+  const isSearchPage =
+    url.pathname
+      .toLocaleLowerCase("tr-TR")
+      .includes("/product/search");
+
+  return !isSearchPage;
+}
+
 export class HappyCenterCollectorService
   implements MarketCollector
 {
-  readonly storeName = "Happy Center";
+  readonly storeName =
+    "Happy Center";
 
   async collect(
     options: CollectorOptions,
   ): Promise<CollectorResult> {
-    const sourceUrl = normalizeHappyCenterUrl(
-      options.sourceUrl,
-    );
+    const sourceUrl =
+      normalizeHappyCenterUrl(
+        options.sourceUrl,
+      );
 
-    const maximumProductCount = Math.min(
-      Math.max(
-        options.maximumProductCount ?? 20,
-        1,
-      ),
-      500,
-    );
+    const maximumProductCount =
+      Math.min(
+        Math.max(
+          options.maximumProductCount ??
+            100,
+          1,
+        ),
+        500,
+      );
 
     const delayMs = Math.max(
-      options.delayBetweenRequestsMs ?? 1_500,
-      1_000,
+      options.delayBetweenRequestsMs ??
+        1_000,
+      750,
     );
 
     const errors: string[] = [];
 
-    const browser = await chromium.launch({
-      headless: true,
-    });
+    const products:
+      CollectedCatalogProduct[] = [];
+
+    const seenProducts =
+      new Set<string>();
+
+    const browser =
+      await chromium.launch({
+        headless: true,
+      });
 
     try {
-      const context = await browser.newContext({
-        locale: "tr-TR",
-        timezoneId: "Europe/Istanbul",
-        viewport: {
-          width: 1440,
-          height: 1200,
-        },
-        userAgent:
-          "OpportunityOS/1.0 catalog collector (development)",
-      });
+      const context =
+        await browser.newContext({
+          locale: "tr-TR",
+          timezoneId:
+            "Europe/Istanbul",
+          viewport: {
+            width: 1440,
+            height: 1200,
+          },
+          userAgent:
+            "OpportunityOS/1.0 catalog collector",
+        });
 
-      const page = await context.newPage();
+      const targetUrls = [
+        sourceUrl,
+      ];
 
-      await page.goto(sourceUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      });
-
-      await acceptCookies(page);
-      await closePopups(page);
-      await page.waitForTimeout(2_000);
-      await scrollPage(page, delayMs);
-
-      const products = await extractProducts(
-        page,
-        maximumProductCount,
-      );
-
-      if (products.length === 0) {
-        errors.push(
-          "Happy Center sayfasında ürün veya fiyat bulunamadı.",
+      if (
+        shouldCollectSearchPages(
+          sourceUrl,
+        )
+      ) {
+        targetUrls.push(
+          ...DEFAULT_SEARCH_TERMS.map(
+            createSearchUrl,
+          ),
         );
+      }
+
+      for (const targetUrl of targetUrls) {
+        if (
+          products.length >=
+          maximumProductCount
+        ) {
+          break;
+        }
+
+        const remainingCount =
+          maximumProductCount -
+          products.length;
+
+        try {
+          const pageProducts =
+            await collectFromPage(
+              context,
+              targetUrl,
+              remainingCount,
+              delayMs,
+            );
+
+          for (
+            const product of pageProducts
+          ) {
+            const productKey =
+              createProductKey(
+                product,
+              );
+
+            if (
+              seenProducts.has(
+                productKey,
+              )
+            ) {
+              continue;
+            }
+
+            seenProducts.add(
+              productKey,
+            );
+
+            products.push(
+              product,
+            );
+
+            if (
+              products.length >=
+              maximumProductCount
+            ) {
+              break;
+            }
+          }
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Bilinmeyen sayfa toplama hatası.";
+
+          errors.push(
+            `${targetUrl}: ${message}`,
+          );
+        }
       }
 
       await context.close();
 
+      if (products.length === 0) {
+        errors.push(
+          "Happy Center sayfalarında ürün veya fiyat bulunamadı.",
+        );
+      }
+
       return {
-        success: products.length > 0,
-        storeName: this.storeName,
+        success:
+          products.length > 0,
+        storeName:
+          this.storeName,
         sourceUrl,
-        collectedCount: products.length,
+        collectedCount:
+          products.length,
         products,
         errors,
       };
@@ -374,7 +661,8 @@ export class HappyCenterCollectorService
 
       return {
         success: false,
-        storeName: this.storeName,
+        storeName:
+          this.storeName,
         sourceUrl,
         collectedCount: 0,
         products: [],
