@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify": "pnpm lint && pnpm build",
+    "catalog:sync": "curl -fsS \"http://localhost:3000/api/catalog/sync?maximumProductCount=20\""
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",
@@ -31,5 +33,6 @@
     "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "packageManager": "pnpm@10.14.0"
 }
