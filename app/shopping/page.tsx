@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
+
+import ShoppingOptimizationResultCard from "../../src/components/shopping/ShoppingOptimizationResult";
 import {
   shoppingListService,
   type ShoppingList,
@@ -12,18 +19,21 @@ import {
   shoppingOptimizationService,
   type ShoppingOptimizationResult,
 } from "../../src/services/shopping/ShoppingOptimizationService";
-import ShoppingOptimizationResultCard from "../../src/components/shopping/ShoppingOptimizationResult";
+
 const units = ["adet", "kg", "gram", "litre", "paket"];
+const selectedListStorageKey =
+  "opportunityos:selected-shopping-list-id";
+
+type ScannerControls = {
+  stop: () => void;
+};
 
 export default function ShoppingPage() {
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [selectedList, setSelectedList] =
     useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingListItem[]>([]);
-const [barcodeLoading, setBarcodeLoading] = useState(false);
 
-const barcodeReader = new BrowserMultiFormatReader();
-const videoRef = useRef<HTMLVideoElement>(null);
   const [newListName, setNewListName] = useState("");
   const [productName, setProductName] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -35,16 +45,67 @@ const videoRef = useRef<HTMLVideoElement>(null);
   const [processingItemId, setProcessingItemId] =
     useState<number | null>(null);
 
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [optimizationLoading, setOptimizationLoading] =
     useState(false);
-    const [optimizationResult, setOptimizationResult] =
-  useState<ShoppingOptimizationResult | null>(null);
+  const [optimizationResult, setOptimizationResult] =
+    useState<ShoppingOptimizationResult | null>(null);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerControlsRef = useRef<ScannerControls | null>(null);
+  const listRequestIdRef = useRef(0);
+
+  const [barcodeReader] = useState(
+    () => new BrowserMultiFormatReader(),
+  );
+
+  function clearFeedback() {
+    setError("");
+    setMessage("");
+  }
+
+  function clearOptimizationResult() {
+    setOptimizationResult(null);
+  }
+
+  function rememberSelectedList(listId: number | null) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (listId === null) {
+      window.localStorage.removeItem(selectedListStorageKey);
+      return;
+    }
+
+    window.localStorage.setItem(
+      selectedListStorageKey,
+      String(listId),
+    );
+  }
+
+  function stopBarcodeScanner() {
+    scannerControlsRef.current?.stop();
+    scannerControlsRef.current = null;
+    setBarcodeLoading(false);
+
+    const videoElement = videoRef.current;
+
+    if (videoElement?.srcObject instanceof MediaStream) {
+      for (const track of videoElement.srcObject.getTracks()) {
+        track.stop();
+      }
+
+      videoElement.srcObject = null;
+    }
+  }
+
   useEffect(() => {
     let active = true;
+    const requestId = ++listRequestIdRef.current;
 
     async function loadLists() {
       setLoading(true);
@@ -53,7 +114,10 @@ const videoRef = useRef<HTMLVideoElement>(null);
       try {
         const data = await shoppingListService.getLists();
 
-        if (!active) {
+        if (
+          !active ||
+          requestId !== listRequestIdRef.current
+        ) {
           return;
         }
 
@@ -62,22 +126,46 @@ const videoRef = useRef<HTMLVideoElement>(null);
         if (data.length === 0) {
           setSelectedList(null);
           setItems([]);
+          rememberSelectedList(null);
           return;
         }
 
-        const firstList = data[0];
+        const storedListId =
+          typeof window === "undefined"
+            ? null
+            : Number(
+                window.localStorage.getItem(
+                  selectedListStorageKey,
+                ),
+              );
+
+        const listToOpen =
+          data.find(
+            (list) =>
+              Number.isFinite(storedListId) &&
+              list.id === storedListId,
+          ) ?? data[0];
 
         const listWithItems =
-          await shoppingListService.getListWithItems(firstList.id);
+          await shoppingListService.getListWithItems(
+            listToOpen.id,
+          );
 
-        if (!active) {
+        if (
+          !active ||
+          requestId !== listRequestIdRef.current
+        ) {
           return;
         }
 
-        setSelectedList(firstList);
+        setSelectedList(listToOpen);
         setItems(listWithItems.items);
+        rememberSelectedList(listToOpen.id);
       } catch (loadError) {
-        if (!active) {
+        if (
+          !active ||
+          requestId !== listRequestIdRef.current
+        ) {
           return;
         }
 
@@ -87,7 +175,10 @@ const videoRef = useRef<HTMLVideoElement>(null);
             : "Alışveriş listeleri yüklenemedi.",
         );
       } finally {
-        if (active) {
+        if (
+          active &&
+          requestId === listRequestIdRef.current
+        ) {
           setLoading(false);
         }
       }
@@ -97,29 +188,51 @@ const videoRef = useRef<HTMLVideoElement>(null);
 
     return () => {
       active = false;
+      stopBarcodeScanner();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSelectList(list: ShoppingList) {
-    setSelectedList(list);
-    setItems([]);
-    setError("");
-    setMessage("");
+    if (
+      loading ||
+      selectedList?.id === list.id
+    ) {
+      return;
+    }
+
+    const requestId = ++listRequestIdRef.current;
+
+    stopBarcodeScanner();
+    clearFeedback();
+    clearOptimizationResult();
     setLoading(true);
 
     try {
       const listWithItems =
         await shoppingListService.getListWithItems(list.id);
 
+      if (requestId !== listRequestIdRef.current) {
+        return;
+      }
+
+      setSelectedList(list);
       setItems(listWithItems.items);
+      rememberSelectedList(list.id);
     } catch (selectError) {
+      if (requestId !== listRequestIdRef.current) {
+        return;
+      }
+
       setError(
         selectError instanceof Error
           ? selectError.message
           : "Alışveriş listesi açılamadı.",
       );
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -136,8 +249,8 @@ const videoRef = useRef<HTMLVideoElement>(null);
     }
 
     setCreatingList(true);
-    setError("");
-    setMessage("");
+    clearFeedback();
+    clearOptimizationResult();
 
     try {
       const createdList =
@@ -147,10 +260,10 @@ const videoRef = useRef<HTMLVideoElement>(null);
         createdList,
         ...currentLists,
       ]);
-
       setSelectedList(createdList);
       setItems([]);
       setNewListName("");
+      rememberSelectedList(createdList.id);
       setMessage("Yeni alışveriş listesi oluşturuldu.");
     } catch (createError) {
       setError(
@@ -190,8 +303,8 @@ const videoRef = useRef<HTMLVideoElement>(null);
     }
 
     setAddingItem(true);
-    setError("");
-    setMessage("");
+    clearFeedback();
+    clearOptimizationResult();
 
     try {
       const createdItem =
@@ -206,11 +319,12 @@ const videoRef = useRef<HTMLVideoElement>(null);
         ...currentItems,
         createdItem,
       ]);
-
       setProductName("");
       setQuantity("1");
       setUnit("adet");
-      setMessage(`${createdItem.product_name} listeye eklendi.`);
+      setMessage(
+        `${createdItem.product_name} listeye eklendi.`,
+      );
     } catch (addError) {
       setError(
         addError instanceof Error
@@ -221,69 +335,75 @@ const videoRef = useRef<HTMLVideoElement>(null);
       setAddingItem(false);
     }
   }
-async function addProductToSelectedList(
-  productNameToAdd: string,
-  barcode?: string,
-  imageUrl?: string | null,
-) {
-  if (!selectedList) {
-    setError("Önce bir alışveriş listesi oluşturun.");
-    return;
-  }
 
-  const cleanedProductName = productNameToAdd.trim();
+  async function addProductToSelectedList(
+    productNameToAdd: string,
+    barcode?: string,
+    imageUrl?: string | null,
+  ) {
+    if (!selectedList) {
+      setError("Önce bir alışveriş listesi oluşturun.");
+      return;
+    }
 
-  if (!cleanedProductName) {
-    setError("Ürün adı bulunamadı.");
-    return;
-  }
+    const cleanedProductName = productNameToAdd.trim();
 
-  setAddingItem(true);
-  setError("");
-  setMessage("");
+    if (!cleanedProductName) {
+      setError("Ürün adı bulunamadı.");
+      return;
+    }
 
-  try {
-    const createdItem =
-      await shoppingListService.addItem({
-        listId: selectedList.id,
-        productName: cleanedProductName,
-        barcode,
-        imageUrl,
-        quantity: 1,
-        unit: "adet",
-      });
-
-    setItems((currentItems) => [
-      ...currentItems,
-      createdItem,
-    ]);
-
-    setProductName("");
-    setQuantity("1");
-    setUnit("adet");
-
-    setMessage(
-      `${createdItem.product_name} barkodla listeye eklendi.`,
-    );
-  } catch (addError) {
-    setError(
-      addError instanceof Error
-        ? addError.message
-        : "Ürün listeye eklenemedi.",
-    );
-  } finally {
-    setAddingItem(false);
-  }
-}
-  async function handleToggleItem(item: ShoppingListItem) {
-    setProcessingItemId(item.id);
-    setError("");
-    setMessage("");
+    setAddingItem(true);
+    clearFeedback();
+    clearOptimizationResult();
 
     try {
+      const createdItem =
+        await shoppingListService.addItem({
+          listId: selectedList.id,
+          productName: cleanedProductName,
+          barcode: barcode?.trim() || null,
+          imageUrl: imageUrl?.trim() || null,
+          quantity: 1,
+          unit: "adet",
+        });
+
+      setItems((currentItems) => [
+        ...currentItems,
+        createdItem,
+      ]);
+      setProductName("");
+      setQuantity("1");
+      setUnit("adet");
+      setMessage(
+        `${createdItem.product_name} barkodla listeye eklendi.`,
+      );
+    } catch (addError) {
+      setError(
+        addError instanceof Error
+          ? addError.message
+          : "Ürün listeye eklenemedi.",
+      );
+    } finally {
+      setAddingItem(false);
+    }
+  }
+
+  async function handleToggleItem(item: ShoppingListItem) {
+    if (processingItemId !== null) {
+      return;
+    }
+
+    setProcessingItemId(item.id);
+    clearFeedback();
+    clearOptimizationResult();
+
+    try {
+      const nextCompletedValue = !item.is_completed;
+
       await shoppingListService.updateItemCompletion(
         item.id,
-        !item.is_completed,
+        nextCompletedValue,
       );
 
       setItems((currentItems) =>
@@ -291,7 +411,7 @@ async function addProductToSelectedList(
           currentItem.id === item.id
             ? {
                 ...currentItem,
-                is_completed: !currentItem.is_completed,
+                is_completed: nextCompletedValue,
               }
             : currentItem,
         ),
@@ -308,9 +428,13 @@ async function addProductToSelectedList(
   }
 
   async function handleRemoveItem(item: ShoppingListItem) {
+    if (processingItemId !== null) {
+      return;
+    }
+
     setProcessingItemId(item.id);
-    setError("");
-    setMessage("");
+    clearFeedback();
+    clearOptimizationResult();
 
     try {
       await shoppingListService.removeItem(item.id);
@@ -334,7 +458,7 @@ async function addProductToSelectedList(
   }
 
   async function handleRemoveList() {
-    if (!selectedList) {
+    if (!selectedList || loading) {
       return;
     }
 
@@ -346,22 +470,35 @@ async function addProductToSelectedList(
       return;
     }
 
-    setError("");
-    setMessage("");
+    const removedListId = selectedList.id;
+    const remainingLists = lists.filter(
+      (list) => list.id !== removedListId,
+    );
+
+    setLoading(true);
+    clearFeedback();
+    clearOptimizationResult();
+    stopBarcodeScanner();
 
     try {
-      await shoppingListService.removeList(selectedList.id);
-
-      const remainingLists = lists.filter(
-        (list) => list.id !== selectedList.id,
-      );
+      await shoppingListService.removeList(removedListId);
 
       setLists(remainingLists);
-      setSelectedList(null);
-      setItems([]);
 
-      if (remainingLists.length > 0) {
-        await handleSelectList(remainingLists[0]);
+      if (remainingLists.length === 0) {
+        setSelectedList(null);
+        setItems([]);
+        rememberSelectedList(null);
+      } else {
+        const nextList = remainingLists[0];
+        const listWithItems =
+          await shoppingListService.getListWithItems(
+            nextList.id,
+          );
+
+        setSelectedList(nextList);
+        setItems(listWithItems.items);
+        rememberSelectedList(nextList.id);
       }
 
       setMessage("Alışveriş listesi silindi.");
@@ -371,144 +508,197 @@ async function addProductToSelectedList(
           ? removeError.message
           : "Alışveriş listesi silinemedi.",
       );
+    } finally {
+      setLoading(false);
     }
   }
 
- async function handleOptimizeBasket() {
-  const selectedItems = items.filter(
-  (item) => !item.is_completed,
-);
+  async function handleOptimizeBasket() {
+    if (optimizationLoading) {
+      return;
+    }
 
-  if (selectedItems.length === 0) {
-    setError(
-      "Optimizasyon için en az bir tamamlanmamış ürün bulunmalıdır.",
+    const selectedItems = items.filter(
+      (item) => !item.is_completed,
     );
-    return;
-  }
 
-  setOptimizationLoading(true);
-  setOptimizationResult(null);
-  setError("");
-  setMessage("");
-
-  try {
-    const result =
-      await shoppingOptimizationService.optimizeBasket(
-      selectedItems.map((item) => ({
-  id: item.id,
-  productName: item.product_name,
-  barcode: item.barcode ?? undefined,
-  quantity: item.quantity,
-  unit: item.unit,
-})),
+    if (selectedItems.length === 0) {
+      setError(
+        "Optimizasyon için en az bir tamamlanmamış ürün bulunmalıdır.",
       );
-console.log(result);
-    setOptimizationResult(result);
+      return;
+    }
 
-    setMessage(
-      `${result.items.length} ürün başarıyla optimize edildi. Toplam tutar: ${result.total.toFixed(2)} ₺`,
-    );
-  } catch (err) {
+    setOptimizationLoading(true);
     setOptimizationResult(null);
+    clearFeedback();
 
-    setError(
-      err instanceof Error
-        ? err.message
-        : "Market optimizasyonu başarısız oldu.",
-    );
-  } finally {
-    setOptimizationLoading(false);
+    try {
+      const result =
+        await shoppingOptimizationService.optimizeBasket(
+          selectedItems.map((item) => ({
+            id: item.id,
+            productName: item.product_name,
+            barcode: item.barcode ?? undefined,
+            quantity: item.quantity,
+            unit: item.unit,
+          })),
+        );
+
+      setOptimizationResult(result);
+
+      if (result.items.length === 0) {
+        setMessage(
+          "Ürünler için güvenilir bir market eşleşmesi bulunamadı.",
+        );
+      } else {
+        setMessage(
+          `${result.items.length} ürün başarıyla optimize edildi. Toplam tutar: ${result.total.toLocaleString(
+            "tr-TR",
+            {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            },
+          )} ₺`,
+        );
+      }
+    } catch (optimizationError) {
+      setOptimizationResult(null);
+      setError(
+        optimizationError instanceof Error
+          ? optimizationError.message
+          : "Market optimizasyonu başarısız oldu.",
+      );
+    } finally {
+      setOptimizationLoading(false);
+    }
   }
-}
-async function handleScanBarcode() {
-  let barcodeRead = false;
 
-  try {
-    setBarcodeLoading(true);
-
-    const devices =
-      await BrowserMultiFormatReader.listVideoInputDevices();
-
-    if (devices.length === 0) {
-      alert("Kamera bulunamadı.");
-      setBarcodeLoading(false);
+  async function handleScanBarcode() {
+    if (barcodeLoading) {
+      stopBarcodeScanner();
       return;
     }
 
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve());
-    });
-
-    const videoElement = videoRef.current;
-
-    if (!videoElement) {
-      alert("Kamera görüntü alanı hazır değil.");
-      setBarcodeLoading(false);
+    if (!selectedList) {
+      setError("Önce bir alışveriş listesi oluşturun.");
       return;
     }
 
-    const selectedDeviceId = devices[0].deviceId;
+    let barcodeRead = false;
 
-    await barcodeReader.decodeFromVideoDevice(
-      selectedDeviceId,
-      videoElement,
-      async (result, _error, controls) => {
-        if (!result || barcodeRead) {
-          return;
-        }
+    try {
+      clearFeedback();
+      setBarcodeLoading(true);
 
-        barcodeRead = true;
-        controls.stop();
-        setBarcodeLoading(false);
+      const devices =
+        await BrowserMultiFormatReader.listVideoInputDevices();
 
-const barcode = result.getText().trim();
-        try {
-          const response = await fetch(
-            `/api/barcode?barcode=${encodeURIComponent(barcode)}`,
-          );
+      if (devices.length === 0) {
+        throw new Error("Kamera bulunamadı.");
+      }
 
-          const data = await response.json();
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
 
-          if (!response.ok || !data.success) {
-            alert(
-              data.error ??
-                `Barkod okundu ancak ürün bulunamadı: ${barcode}`,
-            );
-            return;
-          }
+      const videoElement = videoRef.current;
 
-        setProductName(data.product.product_name);
+      if (!videoElement) {
+        throw new Error("Kamera görüntü alanı hazır değil.");
+      }
 
-await addProductToSelectedList(
-  data.product.product_name,
-  barcode,
-  data.product.image_url,
-);
-        } catch (lookupError) {
-          console.error(
-            "Barkod ürün sorgulama hatası:",
-            lookupError,
-          );
+      const selectedDevice =
+        devices.find((device) =>
+          /back|rear|environment|arka/i.test(
+            device.label,
+          ),
+        ) ?? devices[0];
 
-          alert("Barkod okundu ancak ürün bilgisi alınamadı.");
-        }
-      },
-    );
-  } catch (error) {
-    console.error("Kamera hatası:", error);
-    alert("Kamera açılamadı.");
-    setBarcodeLoading(false);
+      const controls =
+        await barcodeReader.decodeFromVideoDevice(
+          selectedDevice.deviceId,
+          videoElement,
+          async (result) => {
+            if (!result || barcodeRead) {
+              return;
+            }
+
+            barcodeRead = true;
+            stopBarcodeScanner();
+
+            const barcode = result.getText().trim();
+
+            try {
+              const response = await fetch(
+                `/api/barcode?barcode=${encodeURIComponent(
+                  barcode,
+                )}`,
+                {
+                  cache: "no-store",
+                },
+              );
+
+              const data = (await response.json()) as {
+                success?: boolean;
+                error?: string;
+                product?: {
+                  product_name?: string;
+                  image_url?: string | null;
+                };
+              };
+
+              if (
+                !response.ok ||
+                !data.success ||
+                !data.product?.product_name
+              ) {
+                setError(
+                  data.error ??
+                    `Barkod okundu ancak ürün bulunamadı: ${barcode}`,
+                );
+                return;
+              }
+
+              await addProductToSelectedList(
+                data.product.product_name,
+                barcode,
+                data.product.image_url ?? null,
+              );
+            } catch (lookupError) {
+              console.error(
+                "Barkod ürün sorgulama hatası:",
+                lookupError,
+              );
+              setError(
+                "Barkod okundu ancak ürün bilgisi alınamadı.",
+              );
+            }
+          },
+        );
+
+      scannerControlsRef.current = controls;
+    } catch (scanError) {
+      console.error("Kamera hatası:", scanError);
+      stopBarcodeScanner();
+      setError(
+        scanError instanceof Error
+          ? scanError.message
+          : "Kamera açılamadı.",
+      );
+    }
   }
-}
 
-const completedCount = items.filter(
+  const completedCount = items.filter(
     (item) => item.is_completed,
   ).length;
 
   const progress =
     items.length === 0
       ? 0
-      : Math.round((completedCount / items.length) * 100);
+      : Math.round(
+          (completedCount / items.length) * 100,
+        );
 
   return (
     <main
@@ -519,28 +709,7 @@ const completedCount = items.filter(
           "radial-gradient(circle at top, #172554 0%, #0f172a 38%, #020617 100%)",
         color: "#f8fafc",
       }}
-    >{barcodeLoading && (
-  <div
-    style={{
-      marginBottom: "20px",
-      padding: "16px",
-      borderRadius: "16px",
-      background: "#111827",
-      border: "1px solid #334155",
-    }}
-  >
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      style={{
-        width: "100%",
-        borderRadius: "12px",
-      }}
-    />
-  </div>
-)}
+    >
       <div
         style={{
           width: "min(1180px, 100%)",
@@ -610,7 +779,7 @@ const completedCount = items.filter(
 
         {(error || message) && (
           <div
-            role="status"
+            role={error ? "alert" : "status"}
             style={{
               marginBottom: "20px",
               padding: "14px 16px",
@@ -627,6 +796,62 @@ const completedCount = items.filter(
           >
             {error || message}
           </div>
+        )}
+
+        {barcodeLoading && (
+          <section
+            style={{
+              marginBottom: "20px",
+              padding: "16px",
+              borderRadius: "16px",
+              background: "#111827",
+              border: "1px solid #334155",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "12px",
+              }}
+            >
+              <strong>Kamerayı barkoda doğrultun</strong>
+
+              <button
+                type="button"
+                onClick={stopBarcodeScanner}
+                style={{
+                  padding: "8px 11px",
+                  border:
+                    "1px solid rgba(248, 113, 113, 0.35)",
+                  borderRadius: "9px",
+                  backgroundColor:
+                    "rgba(127, 29, 29, 0.22)",
+                  color: "#fecaca",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Kamerayı Kapat
+              </button>
+            </div>
+
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                width: "100%",
+                maxHeight: "440px",
+                objectFit: "cover",
+                borderRadius: "12px",
+                backgroundColor: "#020617",
+              }}
+            />
+          </section>
         )}
 
         <div
@@ -713,7 +938,17 @@ const completedCount = items.filter(
               </button>
             </form>
 
-            {lists.length === 0 ? (
+            {loading && lists.length === 0 ? (
+              <div
+                style={{
+                  padding: "22px 14px",
+                  color: "#94a3b8",
+                  textAlign: "center",
+                }}
+              >
+                Listeler yükleniyor...
+              </div>
+            ) : lists.length === 0 ? (
               <div
                 style={{
                   padding: "22px 14px",
@@ -745,6 +980,7 @@ const completedCount = items.filter(
                       onClick={() =>
                         void handleSelectList(list)
                       }
+                      disabled={loading}
                       style={{
                         padding: "13px 14px",
                         border: isSelected
@@ -759,7 +995,10 @@ const completedCount = items.filter(
                           : "#e2e8f0",
                         textAlign: "left",
                         fontWeight: 800,
-                        cursor: "pointer",
+                        cursor: loading
+                          ? "wait"
+                          : "pointer",
+                        opacity: loading ? 0.7 : 1,
                       }}
                     >
                       🛒 {list.name}
@@ -854,6 +1093,7 @@ const completedCount = items.filter(
                     onClick={() =>
                       void handleRemoveList()
                     }
+                    disabled={loading}
                     style={{
                       padding: "10px 13px",
                       border:
@@ -863,7 +1103,8 @@ const completedCount = items.filter(
                         "rgba(127, 29, 29, 0.22)",
                       color: "#fecaca",
                       fontWeight: 800,
-                      cursor: "pointer",
+                      cursor: loading ? "wait" : "pointer",
+                      opacity: loading ? 0.7 : 1,
                     }}
                   >
                     Listeyi Sil
@@ -898,7 +1139,7 @@ const completedCount = items.filter(
                   style={{
                     display: "grid",
                     gridTemplateColumns:
-                      "minmax(180px, 1fr) 100px 120px auto",
+                      "minmax(180px, 1fr) 95px 110px auto auto",
                     gap: "10px",
                     marginBottom: "24px",
                   }}
@@ -910,7 +1151,7 @@ const completedCount = items.filter(
                       setError("");
                     }}
                     placeholder="Ürün adı: Süt, peynir..."
-                    disabled={addingItem}
+                    disabled={addingItem || loading}
                     style={{
                       minWidth: 0,
                       padding: "12px 13px",
@@ -931,7 +1172,7 @@ const completedCount = items.filter(
                     }
                     inputMode="decimal"
                     placeholder="Miktar"
-                    disabled={addingItem}
+                    disabled={addingItem || loading}
                     style={{
                       minWidth: 0,
                       padding: "12px",
@@ -950,8 +1191,9 @@ const completedCount = items.filter(
                     onChange={(event) =>
                       setUnit(event.target.value)
                     }
-                    disabled={addingItem}
+                    disabled={addingItem || loading}
                     style={{
+                      minWidth: 0,
                       padding: "12px",
                       border:
                         "1px solid rgba(148, 163, 184, 0.25)",
@@ -970,39 +1212,56 @@ const completedCount = items.filter(
                       </option>
                     ))}
                   </select>
-<button
-  type="button"
-onClick={handleScanBarcode}
-  style={{
-    padding: "12px 16px",
-    border: "1px solid rgba(59,130,246,.35)",
-    borderRadius: "11px",
-    background: "rgba(37,99,235,.15)",
-    color: "#bfdbfe",
-    fontWeight: 700,
-    cursor: "pointer",
-    marginRight: "10px",
-  }}
->
-  📷 Barkod Oku
-</button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleScanBarcode()
+                    }
+                    disabled={addingItem || loading}
+                    style={{
+                      padding: "12px 16px",
+                      border:
+                        "1px solid rgba(59, 130, 246, 0.35)",
+                      borderRadius: "11px",
+                      background: barcodeLoading
+                        ? "rgba(127, 29, 29, 0.22)"
+                        : "rgba(37, 99, 235, 0.15)",
+                      color: barcodeLoading
+                        ? "#fecaca"
+                        : "#bfdbfe",
+                      fontWeight: 800,
+                      cursor:
+                        addingItem || loading
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    {barcodeLoading
+                      ? "Kamerayı Kapat"
+                      : "📷 Barkod Oku"}
+                  </button>
+
                   <button
                     type="submit"
-                    disabled={addingItem}
+                    disabled={addingItem || loading}
                     style={{
                       padding: "12px 16px",
                       border: "none",
                       borderRadius: "11px",
-                      background: addingItem
-                        ? "#475569"
-                        : "linear-gradient(135deg, #22c55e, #14b8a6)",
-                      color: addingItem
-                        ? "#cbd5e1"
-                        : "#052e16",
+                      background:
+                        addingItem || loading
+                          ? "#475569"
+                          : "linear-gradient(135deg, #22c55e, #14b8a6)",
+                      color:
+                        addingItem || loading
+                          ? "#cbd5e1"
+                          : "#052e16",
                       fontWeight: 900,
-                      cursor: addingItem
-                        ? "wait"
-                        : "pointer",
+                      cursor:
+                        addingItem || loading
+                          ? "wait"
+                          : "pointer",
                     }}
                   >
                     {addingItem
@@ -1125,6 +1384,26 @@ onClick={handleScanBarcode}
                               {item.is_completed ? "✓" : ""}
                             </span>
 
+                            {item.image_url && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.image_url}
+                                alt=""
+                                width={60}
+                                height={60}
+                                loading="lazy"
+                                style={{
+                                  width: "60px",
+                                  height: "60px",
+                                  flexShrink: 0,
+                                  objectFit: "contain",
+                                  borderRadius: "8px",
+                                  background: "#ffffff",
+                                  padding: "4px",
+                                }}
+                              />
+                            )}
+
                             <span>
                               <strong
                                 style={{
@@ -1139,21 +1418,6 @@ onClick={handleScanBarcode}
                                   fontSize: "16px",
                                 }}
                               >
-                                {item.image_url && (
-  <img
-    src={item.image_url}
-    alt={item.product_name}
-    style={{
-      width: "60px",
-      height: "60px",
-      objectFit: "contain",
-      borderRadius: "8px",
-      marginBottom: "8px",
-      background: "#fff",
-      padding: "4px",
-    }}
-  />
-)}
                                 {item.product_name}
                               </strong>
 
@@ -1200,9 +1464,7 @@ onClick={handleScanBarcode}
                     })}
                   </div>
                 )}
-<ShoppingOptimizationResultCard
-  result={optimizationResult}
-/>
+
                 {items.length > 0 && (
                   <div
                     style={{
@@ -1243,8 +1505,8 @@ onClick={handleScanBarcode}
                             fontSize: "14px",
                           }}
                         >
-                          Listedeki ürünler için en ucuz market
-                          kombinasyonunu hesaplayacağız.
+                          Tamamlanmamış ürünler için en ucuz
+                          market kombinasyonunu hesaplayacağız.
                         </span>
                       </div>
 
@@ -1253,20 +1515,26 @@ onClick={handleScanBarcode}
                         onClick={() =>
                           void handleOptimizeBasket()
                         }
-                        disabled={optimizationLoading}
+                        disabled={
+                          optimizationLoading ||
+                          loading
+                        }
                         style={{
                           padding: "12px 16px",
                           border: "none",
                           borderRadius: "11px",
                           backgroundColor:
-                            optimizationLoading
+                            optimizationLoading ||
+                            loading
                               ? "#475569"
                               : "#2563eb",
                           color: "#ffffff",
                           fontWeight: 800,
-                          cursor: optimizationLoading
-                            ? "wait"
-                            : "pointer",
+                          cursor:
+                            optimizationLoading ||
+                            loading
+                              ? "wait"
+                              : "pointer",
                         }}
                       >
                         {optimizationLoading
@@ -1276,6 +1544,10 @@ onClick={handleScanBarcode}
                     </div>
                   </div>
                 )}
+
+                <ShoppingOptimizationResultCard
+                  result={optimizationResult}
+                />
               </>
             )}
           </section>
@@ -1283,6 +1555,17 @@ onClick={handleScanBarcode}
       </div>
 
       <style jsx global>{`
+        @media (max-width: 980px) {
+          .item-form {
+            grid-template-columns:
+              minmax(180px, 1fr) 90px 105px !important;
+          }
+
+          .item-form button {
+            width: 100%;
+          }
+        }
+
         @media (max-width: 820px) {
           .shopping-layout {
             grid-template-columns: 1fr !important;
