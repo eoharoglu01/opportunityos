@@ -837,7 +837,7 @@ export const shoppingOptimizationService = {
     }
 
     const response = await fetch(
-      "/api/catalog/all?maximumProductCount=50",
+      "/api/catalog/all?maximumProductCount=500",
       {
         cache: "no-store",
       },
@@ -958,20 +958,26 @@ export const shoppingOptimizationService = {
         0,
       ),
     );
+const shouldPreferSingleStore =
+  Boolean(cheapestCompleteSingleStore) &&
+  savings <= 0;
 
+const finalOptimizedItems = optimizedItems;
+const finalStoreGroups = storeGroups;
+const finalTotal = total;
     const balancedPlan =
-      createBalancedPlan(
-        optimizedItems,
-        singleStoreOptions,
-        total,
-      );
+  createBalancedPlan(
+    finalOptimizedItems,
+    singleStoreOptions,
+    finalTotal,
+  );
 
     return {
-      items: optimizedItems,
-      unmatchedItems,
-      storeGroups,
+items: finalOptimizedItems,
+unmatchedItems,
+storeGroups: finalStoreGroups,
 
-      total,
+total: finalTotal,
       currency:
         optimizedItems[0]?.currency ??
         "TRY",
@@ -984,13 +990,14 @@ export const shoppingOptimizationService = {
       savings,
 
       recommendedStoreCount:
-        storeGroups.length,
+  finalStoreGroups.length,
 
-      recommendedTotal: total,
+recommendedTotal: finalTotal,
       recommendedSavings: savings,
 
-      matchedItemCount:
-        optimizedItems.length,
+      
+        matchedItemCount:
+  finalOptimizedItems.length,
 
       unmatchedItemCount:
         unmatchedItems.length,

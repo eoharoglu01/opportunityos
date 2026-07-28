@@ -306,7 +306,7 @@ export class HappyCenterCollectorService
         options.maximumProductCount ?? 20,
         1,
       ),
-      50,
+      500,
     );
 
     const delayMs = Math.max(
