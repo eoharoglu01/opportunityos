@@ -696,10 +696,12 @@ export default function ShoppingOptimizationResult({
           }}
         >
           {storeCount <= 1
-            ? "Tüm ürünleri tek marketten almak şu anda en uygun seçenektir."
-            : `${storeCount} markete giderek ${formatCurrency(
-                result.recommendedSavings,
-              )} tasarruf edebilirsiniz.`}
+           ? "Tüm ürünleri tek marketten almak şu anda en uygun seçenektir."
+: result.recommendedSavings > 0
+  ? `${storeCount} markete giderek ${formatCurrency(
+      result.recommendedSavings,
+    )} tasarruf edebilirsiniz.`
+  : `Tüm ürünleri almak için ${storeCount} market gerekiyor.`}
         </span>
       </div>
 
