@@ -50,6 +50,23 @@ type CatalogApiResponse = {
   };
 };
 
+
+type SearchApiProduct = {
+  id: number | string;
+  productName: string;
+  store: string;
+  price: string | number;
+  savings?: string | number;
+  badge?: string;
+  description?: string;
+};
+
+type SearchApiResponse = {
+  success: boolean;
+  data?: SearchApiProduct[];
+  error?: string;
+};
+
 export type OptimizedBasketItem = {
   shoppingItemId: number;
   requestedProductName: string;
@@ -901,6 +918,111 @@ function createBalancedPlan(
   };
 }
 
+
+function convertSearchProductsToCatalogGroups(
+  products: SearchApiProduct[],
+): CatalogProductGroup[] {
+  const offerGroups = new Map<
+    string,
+    CatalogOffer[]
+  >();
+
+  for (const product of products) {
+    const productName =
+      product.productName?.trim();
+    const storeName = product.store?.trim();
+    const price = Number(product.price);
+
+    if (
+      !productName ||
+      !storeName ||
+      !Number.isFinite(price) ||
+      price <= 0
+    ) {
+      continue;
+    }
+
+    const normalizedName =
+      normalizeText(productName);
+
+    if (!normalizedName) {
+      continue;
+    }
+
+    const offers =
+      offerGroups.get(normalizedName) ?? [];
+
+    const isDuplicate = offers.some(
+      (offer) =>
+        normalizeText(offer.storeName) ===
+          normalizeText(storeName) &&
+        Number(offer.price) === price,
+    );
+
+    if (isDuplicate) {
+      continue;
+    }
+
+    offers.push({
+      storeName,
+      productName,
+      price,
+      currency: "TRY",
+      sourceUrl: `/search?query=${encodeURIComponent(
+        productName,
+      )}`,
+      collectedAt: new Date().toISOString(),
+    });
+
+    offerGroups.set(normalizedName, offers);
+  }
+
+  return Array.from(offerGroups.entries()).map(
+    ([normalizedName, rawOffers]) => {
+      const offers = [...rawOffers].sort(
+        (firstOffer, secondOffer) =>
+          firstOffer.price - secondOffer.price,
+      );
+
+      const cheapestOffer = offers[0];
+      const cheapestPrice = cheapestOffer.price;
+      const highestPrice = Math.max(
+        ...offers.map((offer) => offer.price),
+      );
+      const maximumSavings = roundMoney(
+        Math.max(highestPrice - cheapestPrice, 0),
+      );
+      const storeCount = new Set(
+        offers.map((offer) =>
+          normalizeText(offer.storeName),
+        ),
+      ).size;
+
+      return {
+        normalizedName,
+        productName: cheapestOffer.productName,
+        cheapestOffer,
+        cheapestPrice,
+        highestPrice,
+        maximumSavings,
+        savingsPercentage:
+          highestPrice > 0
+            ? Number(
+                (
+                  (maximumSavings / highestPrice) *
+                  100
+                ).toFixed(2),
+              )
+            : 0,
+        offerCount: offers.length,
+        storeCount,
+        isComparable: storeCount > 1,
+        offers,
+      };
+    },
+  );
+}
+
 export const shoppingOptimizationService = {
   async optimizeBasket(
     inputItems: OptimizationInputItem[],
@@ -921,35 +1043,87 @@ export const shoppingOptimizationService = {
       );
     }
 
-    const response = await fetch(
-      "/api/catalog/all?maximumProductCount=500",
-      {
-        cache: "no-store",
-      },
+    const searchResults = await Promise.all(
+      validInputItems.map(async (inputItem) => {
+        const response = await fetch(
+          `/api/search?query=${encodeURIComponent(
+            inputItem.productName.trim(),
+          )}`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+
+        let result: SearchApiResponse;
+
+        try {
+          result =
+            (await response.json()) as SearchApiResponse;
+        } catch {
+          return [];
+        }
+
+        if (
+          !response.ok ||
+          !result.success ||
+          !Array.isArray(result.data)
+        ) {
+          return [];
+        }
+
+        return result.data;
+      }),
     );
 
-    let catalogResponse: CatalogApiResponse;
+    const uniqueProducts = new Map<
+      string,
+      SearchApiProduct
+    >();
 
-    try {
-      catalogResponse =
-        (await response.json()) as CatalogApiResponse;
-    } catch {
-      throw new Error(
-        "Market kataloğu geçersiz cevap döndürdü.",
-      );
+    for (const products of searchResults) {
+      for (const product of products) {
+        const key = [
+          normalizeText(product.productName),
+          normalizeText(product.store),
+          Number(product.price),
+        ].join("|");
+
+        uniqueProducts.set(key, product);
+      }
     }
 
-    if (
-      !response.ok ||
-      !catalogResponse.success
-    ) {
-      throw new Error(
-        "Canlı market fiyatları alınamadı.",
-      );
-    }
+    const allProducts = Array.from(
+      uniqueProducts.values(),
+    );
 
     const catalogGroups =
-      catalogResponse.groupedProducts ?? [];
+      convertSearchProductsToCatalogGroups(
+        allProducts,
+      );
+
+    const successfulStores = new Set(
+      allProducts
+        .map((product) => product.store?.trim())
+        .filter(
+          (storeName): storeName is string =>
+            Boolean(storeName),
+        ),
+    );
+
+    const catalogResponse: CatalogApiResponse = {
+      success: true,
+      groupedProducts: catalogGroups,
+      summary: {
+        successfulMarkets: successfulStores.size,
+        failedMarkets: 0,
+        totalProducts: allProducts.length,
+        totalProductGroups: catalogGroups.length,
+      },
+    };
 
     if (catalogGroups.length === 0) {
       throw new Error(
