@@ -8,6 +8,7 @@ import "../../../../src/services/catalog/collectors/A101CollectorService";
 import "../../../../src/services/catalog/collectors/TarimKrediCollectorService";
 import "../../../../src/services/catalog/collectors/BizimToptanCollectorService";
 import "../../../../src/services/catalog/collectors/HakmarCollectorService";
+import "../../../../src/services/catalog/collectors/OnurMarketCollectorService";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 import { collectorEngine } from "../../../../src/services/catalog/collectors/CollectorEngine";
 
@@ -76,6 +77,12 @@ hakmarexpress:
   "https://www.hakmarexpress.com.tr/",
 "hakmar-express":
   "https://www.hakmarexpress.com.tr/",
+onur:
+  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
+"onur-market":
+  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
+onurmarket:
+  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
 };
 
 const collectorMarket =
@@ -88,10 +95,14 @@ const collectorMarket =
           normalizedMarket === "bizim-toptan"
         ? "bizim toptan"
         : normalizedMarket === "hakmar" ||
-            normalizedMarket === "hakmarexpress" ||
-            normalizedMarket === "hakmar-express"
-          ? "hakmar express"
-          : normalizedMarket;
+    normalizedMarket === "hakmarexpress" ||
+    normalizedMarket === "hakmar-express"
+  ? "hakmar express"
+  : normalizedMarket === "onur" ||
+      normalizedMarket === "onurmarket" ||
+      normalizedMarket === "onur-market"
+    ? "onur market"
+    : normalizedMarket;
 
   const sourceUrl =
     requestUrl.searchParams.get("sourceUrl") ??
