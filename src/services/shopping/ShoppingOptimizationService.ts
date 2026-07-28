@@ -404,17 +404,24 @@ function findBestGroupMatch(
       ),
     ].filter(Boolean);
 
-    let highestSimilarity = 0;
-    let containsRequestedName = false;
-    let allRequestedTokensExist = false;
+    let groupScore = 0;
 
     for (const candidateName of candidateNames) {
       const normalizedCandidate =
         normalizeText(candidateName);
 
-      const candidateTokens = tokenize(
-        candidateName,
-      );
+      const candidateTokens =
+        tokenize(candidateName);
+
+      const allRequestedTokensExist =
+        requestedTokens.length > 0 &&
+        requestedTokens.every((token) =>
+          candidateTokens.includes(token),
+        );
+
+      if (!allRequestedTokensExist) {
+        continue;
+      }
 
       const similarity =
         calculateTokenSimilarity(
@@ -422,48 +429,159 @@ function findBestGroupMatch(
           candidateName,
         );
 
-      highestSimilarity = Math.max(
-        highestSimilarity,
-        similarity,
-      );
+      let candidateScore =
+        similarity * 100;
 
       if (
+        normalizedCandidate ===
+        normalizedRequestedName
+      ) {
+        candidateScore += 40;
+      } else if (
+        normalizedCandidate.startsWith(
+          `${normalizedRequestedName} `,
+        )
+      ) {
+        candidateScore += 25;
+      } else if (
         normalizedCandidate.includes(
           normalizedRequestedName,
         )
       ) {
-        containsRequestedName = true;
+        candidateScore += 10;
       }
 
-      if (
-        requestedTokens.length > 0 &&
-        requestedTokens.every((token) =>
-          candidateTokens.includes(token),
-        )
-      ) {
-        allRequestedTokensExist = true;
+      /*
+       * Tek kelimelik genel ürünlerde,
+       * gereksiz uzun ve özel ürün adlarını geriye at.
+       */
+      if (requestedTokens.length === 1) {
+        const extraTokenCount = Math.max(
+          candidateTokens.length -
+            requestedTokens.length,
+          0,
+        );
+
+        candidateScore -=
+          extraTokenCount * 4;
       }
+
+      const requestedProduct =
+        requestedTokens[0] ?? "";
+
+      if (requestedProduct === "sut") {
+        const unsuitableMilkWords = [
+          "sutlac",
+          "cikolata",
+          "cikolatali",
+          "muzlu",
+          "cocuk",
+          "organik",
+          "laktozsuz",
+          "4x",
+          "6x",
+          "200 ml",
+          "500 ml",
+        ];
+
+        if (
+          unsuitableMilkWords.some((word) =>
+            normalizedCandidate.includes(word),
+          )
+        ) {
+          candidateScore -= 35;
+        }
+
+        if (
+          normalizedCandidate.includes("1 l") ||
+          normalizedCandidate.includes("1l")
+        ) {
+          candidateScore += 25;
+        }
+
+        if (
+          normalizedCandidate.includes(
+            "tam yagli",
+          )
+        ) {
+          candidateScore += 8;
+        }
+      }
+
+      if (requestedProduct === "su") {
+        const unsuitableWaterWords = [
+          "maden suyu",
+          "soda",
+          "aromali",
+          "gazli",
+        ];
+
+        if (
+          unsuitableWaterWords.some((word) =>
+            normalizedCandidate.includes(word),
+          )
+        ) {
+          candidateScore -= 40;
+        }
+
+        if (
+          normalizedCandidate.includes("1.5 l") ||
+          normalizedCandidate.includes("1.5l")
+        ) {
+          candidateScore += 20;
+        }
+
+        if (
+          normalizedCandidate.includes("5 l") ||
+          normalizedCandidate.includes("5l")
+        ) {
+          candidateScore -= 8;
+        }
+      }
+
+      if (requestedProduct === "ekmek") {
+        const unsuitableBreadWords = [
+          "galeta",
+          "kek",
+          "sandvic",
+          "hamburger",
+          "tost",
+          "kruton",
+        ];
+
+        if (
+          unsuitableBreadWords.some((word) =>
+            normalizedCandidate.includes(word),
+          )
+        ) {
+          candidateScore -= 30;
+        }
+
+        if (
+          normalizedCandidate === "ekmek" ||
+          normalizedCandidate.startsWith(
+            "ekmek ",
+          )
+        ) {
+          candidateScore += 20;
+        }
+      }
+
+      candidateScore += Math.min(
+        (group.opportunityScore ?? 0) /
+          1000,
+        5,
+      );
+
+      groupScore = Math.max(
+        groupScore,
+        candidateScore,
+      );
     }
 
-    let calculatedScore =
-      highestSimilarity * 100;
-
-    if (containsRequestedName) {
-      calculatedScore += 35;
-    }
-
-    if (allRequestedTokensExist) {
-      calculatedScore += 30;
-    }
-
-    calculatedScore += Math.min(
-      (group.opportunityScore ?? 0) / 1000,
-      5,
-    );
-
-    calculatedScore = Math.min(
+    const calculatedScore = Math.min(
       95,
-      Math.round(calculatedScore),
+      Math.round(groupScore),
     );
 
     if (
