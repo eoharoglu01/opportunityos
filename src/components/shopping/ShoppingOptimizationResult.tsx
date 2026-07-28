@@ -894,41 +894,7 @@ export default function ShoppingOptimizationResult({
         </div>
       )}
 
-      {process.env.NODE_ENV ===
-        "development" && (
-        <div
-          style={{
-            marginTop: "24px",
-            padding: "16px",
-            borderRadius: "12px",
-            background: "#111827",
-            color: "#ffffff",
-            fontSize: "12px",
-            overflowX: "auto",
-          }}
-        >
-          <strong>🐞 Debug</strong>
 
-          <pre
-            style={{
-              marginTop: "12px",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {JSON.stringify(
-              {
-                userLocation,
-                storeLocations,
-                storeGroups:
-                  result.storeGroups,
-                routeUrl,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </div>
-      )}
     </section>
   );
 }
