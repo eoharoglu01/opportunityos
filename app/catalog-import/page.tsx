@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import { catalogImportService } from "../../src/services/catalog/CatalogImportService";
 
 type CatalogProduct = {
   storeName: string;
@@ -66,17 +65,23 @@ export default function CatalogImportPage() {
         );
       }
 
-      const response =
-        await catalogImportService.importProducts(
-          products,
-        );
-
-      setResult({
-        success: true,
-        message: "JSON başarıyla içe aktarıldı.",
+      const response = await fetch("/api/catalog/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ products }),
       });
 
-      console.log(response);
+      const payload = (await response.json()) as ImportResult;
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ?? "Ürünler içe aktarılamadı.",
+        );
+      }
+
+      setResult(payload);
     } catch (error) {
       setResult({
         success: false,
@@ -90,21 +95,21 @@ export default function CatalogImportPage() {
     }
   }
 
-async function handleImageUpload() {
-  if (!selectedImage) {
-    setResult({
-      success: false,
-      error: "Önce bir market afişi seçmelisin.",
-    });
-    return;
-  }
+  async function handleImageUpload() {
+    if (!selectedImage) {
+      setResult({
+        success: false,
+        error: "Önce bir market afişi seçmelisin.",
+      });
+      return;
+    }
 
-  setResult({
-    success: true,
-    message:
-      "🚧 OCR özelliği şu anda geçici olarak kapalı.\n\nBu nedenle afiş analiz edilmedi. Şimdilik JSON ile ürün aktarımını kullanacağız.",
-  });
-}
+    setResult({
+      success: true,
+      message:
+        "🚧 OCR özelliği şu anda geçici olarak kapalı.\n\nBu nedenle afiş analiz edilmedi. Şimdilik JSON ile ürün aktarımını kullanacağız.",
+    });
+  }
 
   return (
     <main

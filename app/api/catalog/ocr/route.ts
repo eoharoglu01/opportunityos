@@ -1,12 +1,32 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return null;
+  }
+
+  return new OpenAI({
+    apiKey,
+  });
+}
 
 export async function POST(request: Request) {
   try {
+    const openai = getOpenAIClient();
+
+if (!openai) {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "OCR şu anda devre dışı. OPENAI_API_KEY tanımlanmamış.",
+    },
+    { status: 503 },
+  );
+}
     const formData = await request.formData();
     const file = formData.get("image");
 

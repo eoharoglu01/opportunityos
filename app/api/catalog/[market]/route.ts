@@ -8,6 +8,8 @@ import "../../../../src/services/catalog/collectors/A101CollectorService";
 import "../../../../src/services/catalog/collectors/TarimKrediCollectorService";
 import "../../../../src/services/catalog/collectors/BizimToptanCollectorService";
 import "../../../../src/services/catalog/collectors/HakmarCollectorService";
+import "../../../../src/services/catalog/collectors/KimMarketCollectorService";
+import "../../../../src/services/catalog/collectors/HappyCenterCollectorService";
 import "../../../../src/services/catalog/collectors/OnurMarketCollectorService";
 import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 import { collectorEngine } from "../../../../src/services/catalog/collectors/CollectorEngine";
@@ -77,6 +79,18 @@ hakmarexpress:
   "https://www.hakmarexpress.com.tr/",
 "hakmar-express":
   "https://www.hakmarexpress.com.tr/",
+kim:
+  "https://www.kimgeldi.com/search",
+kimmarket:
+  "https://www.kimgeldi.com/search",
+"kim-market":
+  "https://www.kimgeldi.com/search",
+  happy:
+  "https://www.happycenter.com.tr/",
+happycenter:
+  "https://www.happycenter.com.tr/",
+"happy-center":
+  "https://www.happycenter.com.tr/",
 onur:
   "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
 "onur-market":
@@ -98,6 +112,14 @@ const collectorMarket =
     normalizedMarket === "hakmarexpress" ||
     normalizedMarket === "hakmar-express"
   ? "hakmar express"
+  : normalizedMarket === "kim" ||
+    normalizedMarket === "kimmarket" ||
+    normalizedMarket === "kim-market"
+  ? "kim market"
+  : normalizedMarket === "happy" ||
+    normalizedMarket === "happycenter" ||
+    normalizedMarket === "happy-center"
+  ? "happy center"
   : normalizedMarket === "onur" ||
       normalizedMarket === "onurmarket" ||
       normalizedMarket === "onur-market"

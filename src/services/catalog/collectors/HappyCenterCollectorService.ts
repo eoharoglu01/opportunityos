@@ -1,7 +1,5 @@
 import { chromium, type Page } from "playwright";
-import { getPath } from "pdf-parse/worker";
-import { PDFParse } from "pdf-parse";
-PDFParse.setWorker(getPath());
+
 import type {
   CollectedCatalogProduct,
   CollectorOptions,
@@ -15,20 +13,17 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function normalizeOnurMarketUrl(
-  value: string,
-): string {
+function normalizeHappyCenterUrl(value: string): string {
   const url = new URL(value);
 
-if (
-  url.hostname !== "kurumsal.onurmarket.com" &&
-  url.hostname !== "www.onurmarket.com" &&
-  url.hostname !== "onurmarket.com"
-) {
-  throw new Error(
-    "Yalnızca Onur Market adreslerinden veri toplanabilir.",
-  );
-}
+  if (
+    url.hostname !== "www.happycenter.com.tr" &&
+    url.hostname !== "happycenter.com.tr"
+  ) {
+    throw new Error(
+      "Yalnızca happycenter.com.tr adreslerinden veri toplanabilir.",
+    );
+  }
 
   url.protocol = "https:";
   url.hash = "";
@@ -36,9 +31,7 @@ if (
   return url.toString();
 }
 
-function parseTurkishPrice(
-  value: string,
-): number | null {
+function parseTurkishPrice(value: string): number | null {
   const match = value.match(
     /(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/i,
   );
@@ -81,7 +74,6 @@ async function acceptCookies(
     /kabul et/i,
     /onayla/i,
     /tamam/i,
-    /izin ver/i,
   ];
 
   for (const name of buttonNames) {
@@ -94,6 +86,30 @@ async function acceptCookies(
       return;
     }
   }
+}
+
+async function closePopups(
+  page: Page,
+): Promise<void> {
+  const selectors = [
+    '[aria-label="Close"]',
+    '[aria-label="Kapat"]',
+    ".modal-close",
+    ".close",
+    'button:has-text("Kapat")',
+  ];
+
+  for (const selector of selectors) {
+    const button = page.locator(selector).first();
+
+    if (await button.isVisible().catch(() => false)) {
+      await button.click().catch(() => undefined);
+    }
+  }
+
+  await page.keyboard
+    .press("Escape")
+    .catch(() => undefined);
 }
 
 async function scrollPage(
@@ -133,145 +149,6 @@ async function scrollPage(
     });
   });
 }
-async function extractPdfText(
-  pdfUrl: string,
-): Promise<string> {
-  const parser = new PDFParse({
-    url: pdfUrl,
-  });
-
-  try {
-    const result = await parser.getText();
-
-    return result.text ?? "";
-  } finally {
-    await parser.destroy();
-  }
-  }
-  function extractProductsFromPdfText(
-  pdfText: string,
-  pdfUrl: string,
-  maximumProductCount: number,
-): CollectedCatalogProduct[] {
-  const collectedAt = new Date().toISOString();
-
-  const lines = pdfText
-    .split(/\r?\n/)
-    .map((line) =>
-      line.replace(/\s+/g, " ").trim(),
-    )
-    .filter(Boolean);
-
-  const pricePattern =
-    /(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/i;
-
-  const ignoredPatterns = [
-    /kampanya/i,
-    /indirimler/i,
-    /onur kart/i,
-    /stoklarla sınırlıdır/i,
-    /geçerlidir/i,
-    /www\./i,
-    /onurmarket/i,
-    /çok al az öde/i,
-    /^\d{1,2}[./-]\d{1,2}/,
-  ];
-
-  const products: CollectedCatalogProduct[] = [];
-  const seen = new Set<string>();
-
-  for (
-    let index = 0;
-    index < lines.length;
-    index += 1
-  ) {
-    if (products.length >= maximumProductCount) {
-      break;
-    }
-
-    const line = lines[index];
-    const priceMatch = line.match(pricePattern);
-
-    if (!priceMatch) {
-      continue;
-    }
-
-    const price = parseTurkishPrice(priceMatch[0]);
-
-    if (price === null) {
-      continue;
-    }
-
-    const priceIndex = priceMatch.index ?? 0;
-
-    let productName = normalizeWhitespace(
-      line.slice(0, priceIndex),
-    );
-
-    productName = productName
-      .replace(
-        /^(süper fiyat|onur fiyat|fırsat fiyatı|onur kart fiyatı)\s*/i,
-        "",
-      )
-      .replace(/^[•\-–—|]+/, "")
-      .trim();
-
-    if (
-      productName.length < 3 ||
-      ignoredPatterns.some((pattern) =>
-        pattern.test(productName),
-      )
-    ) {
-      productName = "";
-
-      for (
-        let offset = 1;
-        offset <= 3;
-        offset += 1
-      ) {
-        const candidate =
-          lines[index - offset] ?? "";
-
-        if (
-          candidate.length >= 3 &&
-          !pricePattern.test(candidate) &&
-          !ignoredPatterns.some((pattern) =>
-            pattern.test(candidate),
-          )
-        ) {
-          productName = candidate;
-          break;
-        }
-      }
-    }
-
-    if (!productName) {
-      continue;
-    }
-
-    const uniqueKey =
-      `${productName}|${price}`
-        .toLocaleLowerCase("tr-TR");
-
-    if (seen.has(uniqueKey)) {
-      continue;
-    }
-
-    seen.add(uniqueKey);
-
-    products.push({
-      storeName: "Onur Market",
-      productName,
-      brand: guessBrand(productName),
-      price,
-      currency: "TRY",
-      sourceUrl: pdfUrl,
-      collectedAt,
-    });
-  }
-
-  return products;
-}
 
 async function extractProducts(
   page: Page,
@@ -293,27 +170,21 @@ async function extractProducts(
         .filter(Boolean);
 
       const pricePattern =
-        /^(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)$/i;
-
-      const unitPricePattern =
-        /^\(\d{1,7}(?:\.\d{3})*(?:,\d{2})?\s*(?:TL|₺)\s*\/.*\)$/i;
+        /^\d{1,7}(?:\.\d{3})*,\d{2}\s*(?:TL|₺)$/i;
 
       const ignoredTexts = new Set([
-        "Popüler Ürünler",
-        "Çok Satan Ürünler",
-        "Öne Çıkanlar",
-        "Öne Çıkan Ürünler",
-        "Kampanyalı Ürünler",
-        "Kategoriler",
-        "Sepet",
+        "Şube Seçiniz",
+        "Sepete eklendi",
         "Sepetim",
-        "Hesabım",
         "Giriş Yap",
         "Üye Ol",
-        "Adres Seç",
-        "Teslimat Adresi",
-        "Nereye Gelsin",
-        "Teslimat adresi seçin!",
+        "Kategoriler",
+        "Reyon Seçiniz",
+        "Marka Seçiniz",
+        "Alışveriş Listeme Ekle",
+        "Favorilere Ekle",
+        "Ürünler",
+        "Ana Sayfa",
       ]);
 
       const results: Array<{
@@ -325,7 +196,7 @@ async function extractProducts(
       const seen = new Set<string>();
 
       for (
-        let index = 0;
+        let index = 1;
         index < lines.length;
         index += 1
       ) {
@@ -354,7 +225,7 @@ async function extractProducts(
             candidate.length < 3 ||
             ignoredTexts.has(candidate) ||
             pricePattern.test(candidate) ||
-            unitPricePattern.test(candidate)
+            /^\d+(?:[.,]\d+)?$/.test(candidate)
           ) {
             continue;
           }
@@ -368,9 +239,8 @@ async function extractProducts(
         }
 
         const uniqueKey =
-          `${productName}|${priceText}`.toLocaleLowerCase(
-            "tr-TR",
-          );
+          `${productName}|${priceText}`
+            .toLocaleLowerCase("tr-TR");
 
         if (seen.has(uniqueKey)) {
           continue;
@@ -406,7 +276,7 @@ async function extractProducts(
     }
 
     products.push({
-      storeName: "Onur Market",
+      storeName: "Happy Center",
       productName,
       brand: guessBrand(productName),
       price,
@@ -419,15 +289,15 @@ async function extractProducts(
   return products;
 }
 
-export class OnurMarketCollectorService
+export class HappyCenterCollectorService
   implements MarketCollector
 {
-  readonly storeName = "Onur Market";
+  readonly storeName = "Happy Center";
 
   async collect(
     options: CollectorOptions,
   ): Promise<CollectorResult> {
-    const sourceUrl = normalizeOnurMarketUrl(
+    const sourceUrl = normalizeHappyCenterUrl(
       options.sourceUrl,
     );
 
@@ -470,51 +340,18 @@ export class OnurMarketCollectorService
       });
 
       await acceptCookies(page);
+      await closePopups(page);
       await page.waitForTimeout(2_000);
       await scrollPage(page, delayMs);
 
-const catalogLinks = await page
-  .locator(
-    'a[href*="campaign="], a[href*=".pdf"], a[href*="/download/"]',
-  )
-  .evaluateAll((links) =>
-    links.map((link) => ({
-      text: (link.textContent ?? "")
-        .replace(/\s+/g, " ")
-        .trim(),
-      href: (link as HTMLAnchorElement).href,
-    })),
-  );
-
-console.log(
-  "ONUR MARKET GERÇEK KATALOG BAĞLANTILARI:",
-  catalogLinks,
-);
-const currentPdfUrl = catalogLinks.find((link) =>
-  link.href.toLocaleLowerCase("tr-TR").includes(".pdf"),
-)?.href;
-
-if (!currentPdfUrl) {
-  throw new Error(
-    "Onur Market güncel katalog PDF bağlantısı bulunamadı.",
-  );
-}
-
-const pdfText = await extractPdfText(currentPdfUrl);
-
-console.log(
-  "ONUR MARKET PDF METNİ:",
-  pdfText.slice(0, 3000),
-);
-      const products = extractProductsFromPdfText(
-  pdfText,
-  currentPdfUrl,
-  maximumProductCount,
-);
+      const products = await extractProducts(
+        page,
+        maximumProductCount,
+      );
 
       if (products.length === 0) {
         errors.push(
-          "Onur Market sayfasında ürün veya fiyat bulunamadı.",
+          "Happy Center sayfasında ürün veya fiyat bulunamadı.",
         );
       }
 
@@ -532,7 +369,7 @@ console.log(
       errors.push(
         error instanceof Error
           ? error.message
-          : "Onur Market verileri toplanırken bilinmeyen hata oluştu.",
+          : "Happy Center verileri toplanırken bilinmeyen hata oluştu.",
       );
 
       return {
@@ -549,9 +386,9 @@ console.log(
   }
 }
 
-export const onurMarketCollectorService =
-  new OnurMarketCollectorService();
+export const happyCenterCollectorService =
+  new HappyCenterCollectorService();
 
 collectorEngine.register(
-  onurMarketCollectorService,
+  happyCenterCollectorService,
 );

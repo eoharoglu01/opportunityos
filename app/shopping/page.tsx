@@ -376,12 +376,12 @@ async function addProductToSelectedList(
 
  async function handleOptimizeBasket() {
   const selectedItems = items.filter(
-    (item) => item.is_completed,
-  );
+  (item) => !item.is_completed,
+);
 
   if (selectedItems.length === 0) {
     setError(
-      "Optimizasyon için en az bir ürünü tamamlamalısınız.",
+      "Optimizasyon için en az bir tamamlanmamış ürün bulunmalıdır.",
     );
     return;
   }
@@ -394,14 +394,15 @@ async function addProductToSelectedList(
   try {
     const result =
       await shoppingOptimizationService.optimizeBasket(
-        selectedItems.map((item) => ({
-          id: item.id,
-          productName: item.product_name,
-          quantity: item.quantity,
-          unit: item.unit,
-        })),
+      selectedItems.map((item) => ({
+  id: item.id,
+  productName: item.product_name,
+  barcode: item.barcode ?? undefined,
+  quantity: item.quantity,
+  unit: item.unit,
+})),
       );
-
+console.log(result);
     setOptimizationResult(result);
 
     setMessage(

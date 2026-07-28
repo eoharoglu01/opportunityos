@@ -1,90 +1,233 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { favoriteService } from "../../src/services/favorites/FavoriteService";
+import {
+  FormEvent,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
+
 import { alertService } from "../../src/services/AlertService";
+import { favoriteService } from "../../src/services/favorites/FavoriteService";
 
-type Opportunity = {
-  id: number | string;
+type CatalogOffer = {
+  storeName: string;
   productName: string;
-  store: string;
-  price: string | number;
-  savings: string | number;
-  badge: string;
-  description: string;
+  brand?: string;
+  barcode?: string;
+  price: number;
+  currency: string;
+  sourceUrl: string;
+  collectedAt: string;
+  rank?: number;
+  badge?: string | null;
+  isCheapest?: boolean;
+  priceDifference?: number;
+  priceDifferencePercentage?: number;
 };
 
-type SearchResponse = {
+type CatalogProductGroup = {
+  normalizedName: string;
+  productName: string;
+  badge?: string;
+  cheapestOffer: CatalogOffer;
+  cheapestPrice: number;
+  highestPrice: number;
+  maximumSavings: number;
+  savingsPercentage: number;
+  offerCount: number;
+  storeCount: number;
+  isComparable: boolean;
+  offers: CatalogOffer[];
+};
+
+type CatalogSummary = {
+  totalMarkets: number;
+  successfulMarkets: number;
+  failedMarkets: number;
+  totalProducts: number;
+  totalProductGroups: number;
+  comparableProductGroups: number;
+  totalPotentialSavings: number;
+  currency: string;
+};
+
+type CatalogAllResponse = {
   success: boolean;
-  data?: Opportunity[];
-  error?: string;
+  summary?: CatalogSummary;
+  groupedProducts?: CatalogProductGroup[];
+  marketResults?: Array<{
+    market: string;
+    storeName?: string;
+    success: boolean;
+    collectedCount: number;
+    httpStatus: number;
+    errors: string[];
+  }>;
 };
 
-function formatPrice(value: string | number) {
-  return Number(value).toLocaleString("tr-TR", {
+function formatPrice(
+  value: string | number,
+): string {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return "0,00";
+  }
+
+  return numericValue.toLocaleString("tr-TR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 }
 
-function parseTargetPrice(value: string) {
+function parseTargetPrice(value: string): number {
   const normalizedValue = value
     .trim()
     .replace(/\s/g, "")
+    .replace(/\./g, "")
     .replace(",", ".");
 
   return Number(normalizedValue);
 }
 
-export default function SearchPage() {
+function normalizeSearchText(value: string): string {
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function createProductId(
+  group: CatalogProductGroup,
+): string {
+  const input = [
+    group.normalizedName,
+    group.cheapestOffer.storeName,
+    group.cheapestOffer.sourceUrl,
+  ].join("|");
+
+  let hash = 0;
+
+  for (
+    let index = 0;
+    index < input.length;
+    index += 1
+  ) {
+    hash =
+      (hash * 31 + input.charCodeAt(index)) |
+      0;
+  }
+
+  return `catalog-${Math.abs(hash)}`;
+}
+
+function getOfferDifference(
+  offer: CatalogOffer,
+  cheapestPrice: number,
+): number {
+  if (
+    typeof offer.priceDifference === "number"
+  ) {
+    return Math.max(
+      offer.priceDifference,
+      0,
+    );
+  }
+
+  return Math.max(
+    Number(offer.price) - cheapestPrice,
+    0,
+  );
+}
+
+function SearchPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const initialQuery = searchParams.get("query") ?? "";
+  const currentQuery =
+    searchParams.get("query")?.trim() ?? "";
 
-  const [query, setQuery] = useState(initialQuery);
-  const [results, setResults] = useState<Opportunity[]>([]);
+  const [query, setQuery] =
+    useState(currentQuery);
+
+  const [groups, setGroups] = useState<
+    CatalogProductGroup[]
+  >([]);
+
+  const [summary, setSummary] =
+    useState<CatalogSummary | null>(null);
 
   const [status, setStatus] = useState(
-    initialQuery ? "Ürünler aranıyor..." : "Aramak istediğiniz ürünü yazın.",
+    currentQuery
+      ? "Market fiyatları aranıyor..."
+      : "Aramak istediğiniz ürünü yazın.",
   );
 
-  const [isLoading, setIsLoading] = useState(Boolean(initialQuery));
+  const [isLoading, setIsLoading] =
+    useState(Boolean(currentQuery));
 
-  const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const [
+    favoriteProductIds,
+    setFavoriteProductIds,
+  ] = useState<Set<string>>(new Set());
 
-  const [favoriteLoadingId, setFavoriteLoadingId] = useState<string | null>(
-    null,
-  );
+  const [
+    favoriteLoadingId,
+    setFavoriteLoadingId,
+  ] = useState<string | null>(null);
 
-  const [favoriteMessage, setFavoriteMessage] = useState("");
+  const [
+    favoriteMessage,
+    setFavoriteMessage,
+  ] = useState("");
 
-  const [targetPrices, setTargetPrices] = useState<Record<string, string>>({});
+  const [targetPrices, setTargetPrices] =
+    useState<Record<string, string>>({});
 
-  const [alertLoadingId, setAlertLoadingId] = useState<string | null>(null);
+  const [
+    alertLoadingId,
+    setAlertLoadingId,
+  ] = useState<string | null>(null);
 
-  const [alertMessage, setAlertMessage] = useState("");
+  const [alertMessage, setAlertMessage] =
+    useState("");
 
   useEffect(() => {
     let active = true;
 
     async function loadFavorites() {
       try {
-        const favorites = await favoriteService.getFavorites();
+        const favorites =
+          await favoriteService.getFavorites();
 
         if (!active) {
           return;
         }
 
         setFavoriteProductIds(
-          new Set(favorites.map((favorite) => favorite.product_id)),
+          new Set(
+            favorites.map(
+              (favorite) =>
+                favorite.product_id,
+            ),
+          ),
         );
       } catch {
-        // Kullanıcı giriş yapmamış olsa da arama sayfası çalışmaya devam eder.
+        // Giriş yapılmamış olsa da arama çalışmaya devam eder.
       }
     }
 
@@ -96,113 +239,185 @@ export default function SearchPage() {
   }, []);
 
   useEffect(() => {
-  const currentQuery =
-    searchParams.get("query")?.trim() ?? "";
+    let cancelled = false;
 
-  let cancelled = false;
+    async function searchCatalog() {
+      setQuery(currentQuery);
+      setFavoriteMessage("");
+      setAlertMessage("");
+      setTargetPrices({});
 
-  async function searchProducts() {
-    await Promise.resolve();
-
-    if (cancelled) {
-      return;
-    }
-
-    setQuery(currentQuery);
-    setFavoriteMessage("");
-    setAlertMessage("");
-    setTargetPrices({});
-
-    if (!currentQuery) {
-      setResults([]);
-      setStatus("Aramak istediğiniz ürünü yazın.");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      setStatus(
-        "Ürünler ve market fiyatları aranıyor...",
-      );
-
-      const response = await fetch(
-        `/api/search?query=${encodeURIComponent(
-          currentQuery,
-        )}`,
-      );
-
-      const result =
-        (await response.json()) as SearchResponse;
-
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.error ||
-            "Arama sırasında hata oluştu.",
+      if (!currentQuery) {
+        setGroups([]);
+        setSummary(null);
+        setStatus(
+          "Aramak istediğiniz ürünü yazın.",
         );
-      }
-
-      if (cancelled) {
-        return;
-      }
-
-      const sortedItems = [
-        ...(result.data ?? []),
-      ].sort(
-        (a, b) =>
-          Number(a.price) - Number(b.price),
-      );
-
-      setResults(sortedItems);
-      setStatus(
-        sortedItems.length === 0
-          ? `"${currentQuery}" için sonuç bulunamadı.`
-          : `${sortedItems.length} market fiyatı bulundu.`,
-      );
-    } catch (error: unknown) {
-      console.error("Arama hatası:", error);
-
-      if (cancelled) {
-        return;
-      }
-
-      setResults([]);
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : "Arama sırasında beklenmeyen bir hata oluştu.",
-      );
-    } finally {
-      if (!cancelled) {
         setIsLoading(false);
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        setStatus(
+          "Çalışan marketlerde güncel fiyatlar aranıyor...",
+        );
+
+        const response = await fetch(
+          "/api/catalog/all?maximumProductCount=20",
+          {
+            cache: "no-store",
+          },
+        );
+
+        const result =
+          (await response.json()) as CatalogAllResponse;
+
+        if (!response.ok || !result.success) {
+          throw new Error(
+            "Market fiyatları alınamadı.",
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        const normalizedQuery =
+          normalizeSearchText(currentQuery);
+
+        const queryTokens =
+          normalizedQuery
+            .split(" ")
+            .filter(Boolean);
+
+        const filteredGroups = [
+          ...(result.groupedProducts ?? []),
+        ]
+          .filter((group) => {
+            const searchableText =
+              normalizeSearchText(
+                [
+                  group.productName,
+                  group.normalizedName,
+                  ...group.offers.map(
+                    (offer) =>
+                      [
+                        offer.productName,
+                        offer.brand ?? "",
+                        offer.barcode ?? "",
+                        offer.storeName,
+                      ].join(" "),
+                  ),
+                ].join(" "),
+              );
+
+            return queryTokens.every(
+              (token) =>
+                searchableText.includes(token),
+            );
+          })
+          .sort((firstGroup, secondGroup) => {
+            if (
+              firstGroup.isComparable !==
+              secondGroup.isComparable
+            ) {
+              return firstGroup.isComparable
+                ? -1
+                : 1;
+            }
+
+            if (
+              secondGroup.maximumSavings !==
+              firstGroup.maximumSavings
+            ) {
+              return (
+                secondGroup.maximumSavings -
+                firstGroup.maximumSavings
+              );
+            }
+
+            return (
+              firstGroup.cheapestPrice -
+              secondGroup.cheapestPrice
+            );
+          });
+
+        setGroups(filteredGroups);
+        setSummary(result.summary ?? null);
+
+        const totalOfferCount =
+          filteredGroups.reduce(
+            (total, group) =>
+              total + group.offers.length,
+            0,
+          );
+
+        setStatus(
+          filteredGroups.length === 0
+            ? `"${currentQuery}" için sonuç bulunamadı.`
+            : `${filteredGroups.length} ürün grubu ve ${totalOfferCount} market fiyatı bulundu.`,
+        );
+      } catch (error: unknown) {
+        console.error(
+          "Katalog arama hatası:",
+          error,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setGroups([]);
+        setSummary(null);
+
+        setStatus(
+          error instanceof Error
+            ? error.message
+            : "Arama sırasında beklenmeyen bir hata oluştu.",
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     }
-  }
 
-  void searchProducts();
+    void searchCatalog();
 
-  return () => {
-    cancelled = true;
-  };
-}, [searchParams]);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentQuery]);
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
+  function handleSearch(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     const cleanedQuery = query.trim();
 
     if (!cleanedQuery) {
-      setResults([]);
-      setStatus("Lütfen bir ürün adı veya barkod yazın.");
+      setGroups([]);
+      setStatus(
+        "Lütfen bir ürün adı veya barkod yazın.",
+      );
       return;
     }
 
-    router.push(`/search?query=${encodeURIComponent(cleanedQuery)}`);
+    router.push(
+      `/search?query=${encodeURIComponent(
+        cleanedQuery,
+      )}`,
+    );
   }
 
-  async function handleToggleFavorite(opportunity: Opportunity) {
-    const productId = String(opportunity.id);
-    const isFavorite = favoriteProductIds.has(productId);
+  async function handleToggleFavorite(
+    group: CatalogProductGroup,
+  ) {
+    const productId = createProductId(group);
+    const isFavorite =
+      favoriteProductIds.has(productId);
 
     setFavoriteLoadingId(productId);
     setFavoriteMessage("");
@@ -210,30 +425,48 @@ export default function SearchPage() {
 
     try {
       if (isFavorite) {
-        await favoriteService.removeFavorite(productId);
+        await favoriteService.removeFavorite(
+          productId,
+        );
 
-        setFavoriteProductIds((currentIds) => {
-          const nextIds = new Set(currentIds);
-          nextIds.delete(productId);
-          return nextIds;
-        });
+        setFavoriteProductIds(
+          (currentIds) => {
+            const nextIds =
+              new Set(currentIds);
 
-        setFavoriteMessage("Ürün favorilerden kaldırıldı.");
+            nextIds.delete(productId);
+
+            return nextIds;
+          },
+        );
+
+        setFavoriteMessage(
+          "Ürün favorilerden kaldırıldı.",
+        );
       } else {
         await favoriteService.addFavorite({
           productId,
-          productName: opportunity.productName,
-          store: opportunity.store,
-          price: Number(opportunity.price),
+          productName: group.productName,
+          store:
+            group.cheapestOffer.storeName,
+          price:
+            group.cheapestOffer.price,
         });
 
-        setFavoriteProductIds((currentIds) => {
-          const nextIds = new Set(currentIds);
-          nextIds.add(productId);
-          return nextIds;
-        });
+        setFavoriteProductIds(
+          (currentIds) => {
+            const nextIds =
+              new Set(currentIds);
 
-        setFavoriteMessage("Ürün favorilerine eklendi.");
+            nextIds.add(productId);
+
+            return nextIds;
+          },
+        );
+
+        setFavoriteMessage(
+          "Ürün favorilerine eklendi.",
+        );
       }
     } catch (error) {
       const message =
@@ -241,7 +474,11 @@ export default function SearchPage() {
           ? error.message
           : "Favori işlemi sırasında bir hata oluştu.";
 
-      if (message.toLocaleLowerCase("tr-TR").includes("giriş")) {
+      if (
+        message
+          .toLocaleLowerCase("tr-TR")
+          .includes("giriş")
+      ) {
         router.push("/login");
         return;
       }
@@ -252,22 +489,37 @@ export default function SearchPage() {
     }
   }
 
-  async function handleCreateAlert(opportunity: Opportunity) {
-    const productId = String(opportunity.id);
-    const targetPriceText = targetPrices[productId] ?? "";
-    const targetPrice = parseTargetPrice(targetPriceText);
-    const currentPrice = Number(opportunity.price);
+  async function handleCreateAlert(
+    group: CatalogProductGroup,
+  ) {
+    const productId = createProductId(group);
+
+    const targetPriceText =
+      targetPrices[productId] ?? "";
+
+    const targetPrice =
+      parseTargetPrice(targetPriceText);
+
+    const currentPrice =
+      group.cheapestOffer.price;
 
     setFavoriteMessage("");
     setAlertMessage("");
 
     if (!targetPriceText.trim()) {
-      setAlertMessage("Lütfen hedef fiyatı girin.");
+      setAlertMessage(
+        "Lütfen hedef fiyatı girin.",
+      );
       return;
     }
 
-    if (!Number.isFinite(targetPrice) || targetPrice <= 0) {
-      setAlertMessage("Hedef fiyat geçerli ve sıfırdan büyük olmalıdır.");
+    if (
+      !Number.isFinite(targetPrice) ||
+      targetPrice <= 0
+    ) {
+      setAlertMessage(
+        "Hedef fiyat geçerli ve sıfırdan büyük olmalıdır.",
+      );
       return;
     }
 
@@ -276,29 +528,36 @@ export default function SearchPage() {
     try {
       await alertService.createAlert({
         productId,
-        productName: opportunity.productName,
-        store: opportunity.store,
+        productName: group.productName,
+        store:
+          group.cheapestOffer.storeName,
         currentPrice,
         targetPrice,
       });
 
       setAlertMessage(
-        `${opportunity.productName} için ${formatPrice(
+        `${group.productName} için ${formatPrice(
           targetPrice,
         )} TL hedef fiyat alarmı oluşturuldu.`,
       );
 
-      setTargetPrices((currentPrices) => ({
-        ...currentPrices,
-        [productId]: "",
-      }));
+      setTargetPrices(
+        (currentPrices) => ({
+          ...currentPrices,
+          [productId]: "",
+        }),
+      );
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : "Fiyat alarmı oluşturulurken bir hata oluştu.";
 
-      if (message.toLocaleLowerCase("tr-TR").includes("giriş")) {
+      if (
+        message
+          .toLocaleLowerCase("tr-TR")
+          .includes("giriş")
+      ) {
         router.push("/login");
         return;
       }
@@ -309,37 +568,31 @@ export default function SearchPage() {
     }
   }
 
-  const groupedProducts = useMemo(() => {
-    const groups = new Map<string, Opportunity[]>();
+  const searchStatistics = useMemo(() => {
+    const totalOffers = groups.reduce(
+      (total, group) =>
+        total + group.offers.length,
+      0,
+    );
 
-    for (const result of results) {
-      const existing = groups.get(result.productName) ?? [];
+    const comparableGroups =
+      groups.filter(
+        (group) => group.isComparable,
+      ).length;
 
-      existing.push(result);
-      groups.set(result.productName, existing);
-    }
-
-    return Array.from(groups.entries()).map(([productName, offers]) => {
-      const sortedOffers = [...offers].sort(
-        (a, b) => Number(a.price) - Number(b.price),
+    const potentialSavings =
+      groups.reduce(
+        (total, group) =>
+          total + group.maximumSavings,
+        0,
       );
 
-      const cheapest = sortedOffers[0];
-
-      const highestPrice = Math.max(
-        ...sortedOffers.map((offer) => Number(offer.price)),
-      );
-
-      const cheapestPrice = Number(cheapest.price);
-
-      return {
-        productName,
-        offers: sortedOffers,
-        cheapest,
-        totalSavings: highestPrice - cheapestPrice,
-      };
-    });
-  }, [results]);
+    return {
+      totalOffers,
+      comparableGroups,
+      potentialSavings,
+    };
+  }, [groups]);
 
   return (
     <main
@@ -355,19 +608,23 @@ export default function SearchPage() {
           position: "sticky",
           top: 0,
           zIndex: 20,
-          borderBottom: "1px solid rgba(148, 163, 184, 0.14)",
-          backgroundColor: "rgba(2, 6, 23, 0.84)",
+          borderBottom:
+            "1px solid rgba(148, 163, 184, 0.14)",
+          backgroundColor:
+            "rgba(2, 6, 23, 0.84)",
           backdropFilter: "blur(18px)",
         }}
       >
         <div
           style={{
-            width: "min(1100px, calc(100% - 32px))",
+            width:
+              "min(1100px, calc(100% - 32px))",
             minHeight: "72px",
             margin: "0 auto",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            justifyContent:
+              "space-between",
             gap: "16px",
           }}
         >
@@ -390,9 +647,11 @@ export default function SearchPage() {
                 display: "grid",
                 placeItems: "center",
                 borderRadius: "12px",
-                background: "linear-gradient(135deg, #22c55e, #14b8a6)",
+                background:
+                  "linear-gradient(135deg, #22c55e, #14b8a6)",
                 color: "#052e16",
-                boxShadow: "0 8px 25px rgba(34, 197, 94, 0.3)",
+                boxShadow:
+                  "0 8px 25px rgba(34, 197, 94, 0.3)",
               }}
             >
               O
@@ -400,6 +659,7 @@ export default function SearchPage() {
 
             OpportunityOS
           </Link>
+
           <div
             style={{
               display: "flex",
@@ -412,7 +672,8 @@ export default function SearchPage() {
               href="/alerts"
               style={{
                 padding: "10px 14px",
-                border: "1px solid rgba(250, 204, 21, 0.35)",
+                border:
+                  "1px solid rgba(250, 204, 21, 0.35)",
                 borderRadius: "11px",
                 color: "#fde68a",
                 textDecoration: "none",
@@ -426,7 +687,8 @@ export default function SearchPage() {
               href="/favorites"
               style={{
                 padding: "10px 14px",
-                border: "1px solid rgba(248, 113, 113, 0.3)",
+                border:
+                  "1px solid rgba(248, 113, 113, 0.3)",
                 borderRadius: "11px",
                 color: "#fecaca",
                 textDecoration: "none",
@@ -440,7 +702,8 @@ export default function SearchPage() {
               href="/scanner"
               style={{
                 padding: "10px 14px",
-                border: "1px solid rgba(148, 163, 184, 0.25)",
+                border:
+                  "1px solid rgba(148, 163, 184, 0.25)",
                 borderRadius: "11px",
                 color: "#e2e8f0",
                 textDecoration: "none",
@@ -455,7 +718,8 @@ export default function SearchPage() {
 
       <section
         style={{
-          width: "min(1100px, calc(100% - 32px))",
+          width:
+            "min(1100px, calc(100% - 32px))",
           margin: "0 auto",
           padding: "54px 0 70px",
         }}
@@ -477,13 +741,14 @@ export default function SearchPage() {
               textTransform: "uppercase",
             }}
           >
-            Fiyat karşılaştırma
+            Canlı fiyat karşılaştırma
           </p>
 
           <h1
             style={{
               margin: "10px 0 0",
-              fontSize: "clamp(34px, 6vw, 58px)",
+              fontSize:
+                "clamp(34px, 6vw, 58px)",
               lineHeight: 1.08,
               letterSpacing: "-2px",
             }}
@@ -500,7 +765,8 @@ export default function SearchPage() {
               lineHeight: 1.7,
             }}
           >
-            Ürün adı veya barkod girerek farklı marketlerdeki fiyatları
+            Çalışan marketlerin güncel
+            fiyatlarını tek ekranda
             karşılaştır.
           </p>
 
@@ -511,23 +777,29 @@ export default function SearchPage() {
               gap: "10px",
               marginTop: "28px",
               padding: "8px",
-              border: "1px solid rgba(148, 163, 184, 0.2)",
+              border:
+                "1px solid rgba(148, 163, 184, 0.2)",
               borderRadius: "18px",
-              backgroundColor: "rgba(15, 23, 42, 0.78)",
-              boxShadow: "0 22px 70px rgba(0, 0, 0, 0.3)",
+              backgroundColor:
+                "rgba(15, 23, 42, 0.78)",
+              boxShadow:
+                "0 22px 70px rgba(0, 0, 0, 0.3)",
             }}
           >
             <input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Örnek: Coca-Cola veya 5000112664867"
+              onChange={(event) =>
+                setQuery(event.target.value)
+              }
+              placeholder="Örnek: süt, karpuz veya Coca-Cola"
               style={{
                 flex: 1,
                 minWidth: 0,
                 padding: "16px 18px",
                 border: "none",
                 outline: "none",
-                backgroundColor: "transparent",
+                backgroundColor:
+                  "transparent",
                 color: "#ffffff",
                 fontSize: "16px",
               }}
@@ -543,12 +815,18 @@ export default function SearchPage() {
                 background: isLoading
                   ? "#475569"
                   : "linear-gradient(135deg, #22c55e, #14b8a6)",
-                color: isLoading ? "#cbd5e1" : "#052e16",
+                color: isLoading
+                  ? "#cbd5e1"
+                  : "#052e16",
                 fontWeight: 900,
-                cursor: isLoading ? "not-allowed" : "pointer",
+                cursor: isLoading
+                  ? "not-allowed"
+                  : "pointer",
               }}
             >
-              {isLoading ? "Aranıyor..." : "Ara"}
+              {isLoading
+                ? "Aranıyor..."
+                : "Ara"}
             </button>
           </form>
 
@@ -567,9 +845,9 @@ export default function SearchPage() {
               role="status"
               style={{
                 margin: "8px 0 0",
-                color: favoriteMessage.toLocaleLowerCase("tr-TR").includes(
-                  "hata",
-                )
+                color: favoriteMessage
+                  .toLocaleLowerCase("tr-TR")
+                  .includes("hata")
                   ? "#fca5a5"
                   : "#86efac",
                 fontWeight: 700,
@@ -585,11 +863,15 @@ export default function SearchPage() {
               style={{
                 margin: "8px 0 0",
                 color:
-                  alertMessage.toLocaleLowerCase("tr-TR").includes("hata") ||
+                  alertMessage
+                    .toLocaleLowerCase("tr-TR")
+                    .includes("hata") ||
                   alertMessage
                     .toLocaleLowerCase("tr-TR")
                     .includes("geçerli") ||
-                  alertMessage.toLocaleLowerCase("tr-TR").includes("lütfen")
+                  alertMessage
+                    .toLocaleLowerCase("tr-TR")
+                    .includes("lütfen")
                     ? "#fca5a5"
                     : "#fde68a",
                 fontWeight: 700,
@@ -600,28 +882,103 @@ export default function SearchPage() {
           )}
         </div>
 
+        {!isLoading &&
+          currentQuery &&
+          summary && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(170px, 1fr))",
+                gap: "12px",
+                marginTop: "28px",
+              }}
+            >
+              {[
+                {
+                  label:
+                    "Çalışan market",
+                  value:
+                    summary.successfulMarkets,
+                },
+                {
+                  label: "Bulunan fiyat",
+                  value:
+                    searchStatistics.totalOffers,
+                },
+                {
+                  label:
+                    "Karşılaştırılabilen ürün",
+                  value:
+                    searchStatistics.comparableGroups,
+                },
+                {
+                  label:
+                    "Potansiyel tasarruf",
+                  value: `${formatPrice(
+                    searchStatistics.potentialSavings,
+                  )} TL`,
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    padding: "16px",
+                    border:
+                      "1px solid rgba(148, 163, 184, 0.16)",
+                    borderRadius: "15px",
+                    backgroundColor:
+                      "rgba(15, 23, 42, 0.7)",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.label}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "6px",
+                      fontSize: "22px",
+                      fontWeight: 900,
+                    }}
+                  >
+                    {item.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
         {isLoading && (
           <div
             style={{
               display: "grid",
               placeItems: "center",
-              minHeight: "220px",
+              minHeight: "260px",
             }}
           >
             <div
               style={{
                 width: "44px",
                 height: "44px",
-                border: "4px solid rgba(148, 163, 184, 0.25)",
+                border:
+                  "4px solid rgba(148, 163, 184, 0.25)",
                 borderTopColor: "#22c55e",
                 borderRadius: "50%",
-                animation: "spin 0.8s linear infinite",
+                animation:
+                  "spin 0.8s linear infinite",
               }}
             />
           </div>
         )}
 
-        {!isLoading && groupedProducts.length > 0 && (
+        {!isLoading && groups.length > 0 && (
           <div
             style={{
               display: "grid",
@@ -629,30 +986,38 @@ export default function SearchPage() {
               marginTop: "30px",
             }}
           >
-            {groupedProducts.map((group) => {
-              const cheapestProductId = String(group.cheapest.id);
+            {groups.map((group) => {
+              const productId =
+                createProductId(group);
 
               const isFavorite =
-                favoriteProductIds.has(cheapestProductId);
+                favoriteProductIds.has(
+                  productId,
+                );
 
               const isFavoriteLoading =
-                favoriteLoadingId === cheapestProductId;
+                favoriteLoadingId ===
+                productId;
 
               const isAlertLoading =
-                alertLoadingId === cheapestProductId;
+                alertLoadingId === productId;
 
               const targetPrice =
-                targetPrices[cheapestProductId] ?? "";
+                targetPrices[productId] ??
+                "";
 
               return (
                 <section
-                  key={group.productName}
+                  key={`${group.normalizedName}-${productId}`}
                   style={{
                     overflow: "hidden",
-                    border: "1px solid rgba(148, 163, 184, 0.16)",
+                    border:
+                      "1px solid rgba(148, 163, 184, 0.16)",
                     borderRadius: "22px",
-                    backgroundColor: "rgba(15, 23, 42, 0.78)",
-                    boxShadow: "0 18px 55px rgba(0, 0, 0, 0.22)",
+                    backgroundColor:
+                      "rgba(15, 23, 42, 0.78)",
+                    boxShadow:
+                      "0 18px 55px rgba(0, 0, 0, 0.22)",
                   }}
                 >
                   <div
@@ -667,20 +1032,29 @@ export default function SearchPage() {
                     <div
                       style={{
                         display: "flex",
-                        alignItems: "flex-start",
-                        justifyContent: "space-between",
+                        alignItems:
+                          "flex-start",
+                        justifyContent:
+                          "space-between",
                         flexWrap: "wrap",
                         gap: "18px",
                       }}
                     >
-                      <div style={{ flex: "1 1 500px" }}>
+                      <div
+                        style={{
+                          flex: "1 1 500px",
+                        }}
+                      >
                         <div
                           style={{
-                            display: "inline-block",
+                            display:
+                              "inline-block",
                             marginBottom: "10px",
                             padding: "5px 9px",
-                            borderRadius: "999px",
-                            backgroundColor: "#22c55e",
+                            borderRadius:
+                              "999px",
+                            backgroundColor:
+                              "#22c55e",
                             color: "#052e16",
                             fontSize: "12px",
                             fontWeight: 900,
@@ -693,7 +1067,8 @@ export default function SearchPage() {
                           style={{
                             margin: 0,
                             fontSize: "27px",
-                            letterSpacing: "-0.5px",
+                            letterSpacing:
+                              "-0.5px",
                           }}
                         >
                           {group.productName}
@@ -701,12 +1076,40 @@ export default function SearchPage() {
 
                         <p
                           style={{
-                            margin: "8px 0 0",
+                            margin:
+                              "8px 0 0",
                             color: "#94a3b8",
                           }}
                         >
-                          {group.offers.length} markette fiyat bulundu
+                          {group.storeCount} markette{" "}
+                          {group.offerCount} fiyat
+                          bulundu
                         </p>
+
+                        {group.isComparable &&
+                          group.maximumSavings >
+                            0 && (
+                            <p
+                              style={{
+                                margin:
+                                  "8px 0 0",
+                                color:
+                                  "#86efac",
+                                fontWeight: 800,
+                              }}
+                            >
+                              En pahalı fiyata göre{" "}
+                              {formatPrice(
+                                group.maximumSavings,
+                              )}{" "}
+                              TL tasarruf (
+                              {group.savingsPercentage.toLocaleString(
+                                "tr-TR",
+                              )}
+                              %)
+                            </p>
+                          )}
+
                         <div
                           style={{
                             display: "flex",
@@ -715,52 +1118,75 @@ export default function SearchPage() {
                             marginTop: "18px",
                           }}
                         >
-                          <Link
-                            href={`/product/${encodeURIComponent(
-                              cheapestProductId,
-                            )}`}
+                          <a
+                            href={
+                              group
+                                .cheapestOffer
+                                .sourceUrl
+                            }
+                            target="_blank"
+                            rel="noreferrer"
                             style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              padding: "11px 16px",
+                              display:
+                                "inline-flex",
+                              alignItems:
+                                "center",
+                              justifyContent:
+                                "center",
+                              padding:
+                                "11px 16px",
                               border:
                                 "1px solid rgba(255, 255, 255, 0.18)",
-                              borderRadius: "12px",
-                              backgroundColor: "#ffffff",
+                              borderRadius:
+                                "12px",
+                              backgroundColor:
+                                "#ffffff",
                               color: "#0f172a",
-                              textDecoration: "none",
+                              textDecoration:
+                                "none",
                               fontSize: "14px",
                               fontWeight: 900,
                             }}
                           >
-                            Ürün Detayını Gör →
-                          </Link>
+                            Market Sayfasını Aç →
+                          </a>
 
                           <button
                             type="button"
                             onClick={() =>
-                              handleToggleFavorite(group.cheapest)
+                              void handleToggleFavorite(
+                                group,
+                              )
                             }
-                            disabled={isFavoriteLoading}
+                            disabled={
+                              isFavoriteLoading
+                            }
                             style={{
-                              padding: "11px 16px",
+                              padding:
+                                "11px 16px",
                               border: isFavorite
                                 ? "1px solid rgba(248, 113, 113, 0.55)"
                                 : "1px solid rgba(148, 163, 184, 0.3)",
-                              borderRadius: "12px",
-                              backgroundColor: isFavorite
-                                ? "rgba(127, 29, 29, 0.55)"
-                                : "rgba(15, 23, 42, 0.8)",
-                              color: isFavorite
-                                ? "#fecaca"
-                                : "#e2e8f0",
+                              borderRadius:
+                                "12px",
+                              backgroundColor:
+                                isFavorite
+                                  ? "rgba(127, 29, 29, 0.55)"
+                                  : "rgba(15, 23, 42, 0.8)",
+                              color:
+                                isFavorite
+                                  ? "#fecaca"
+                                  : "#e2e8f0",
                               fontSize: "14px",
                               fontWeight: 900,
-                              cursor: isFavoriteLoading
-                                ? "wait"
-                                : "pointer",
-                              opacity: isFavoriteLoading ? 0.7 : 1,
+                              cursor:
+                                isFavoriteLoading
+                                  ? "wait"
+                                  : "pointer",
+                              opacity:
+                                isFavoriteLoading
+                                  ? 0.7
+                                  : 1,
                             }}
                           >
                             {isFavoriteLoading
@@ -774,7 +1200,8 @@ export default function SearchPage() {
                         <div
                           style={{
                             display: "flex",
-                            alignItems: "stretch",
+                            alignItems:
+                              "stretch",
                             flexWrap: "wrap",
                             gap: "10px",
                             maxWidth: "470px",
@@ -782,69 +1209,107 @@ export default function SearchPage() {
                             padding: "12px",
                             border:
                               "1px solid rgba(250, 204, 21, 0.22)",
-                            borderRadius: "14px",
-                            backgroundColor: "rgba(113, 63, 18, 0.18)",
+                            borderRadius:
+                              "14px",
+                            backgroundColor:
+                              "rgba(113, 63, 18, 0.18)",
                           }}
                         >
                           <div
                             style={{
-                              flex: "1 1 180px",
+                              flex:
+                                "1 1 180px",
                               minWidth: 0,
                             }}
                           >
                             <label
-                              htmlFor={`target-price-${cheapestProductId}`}
+                              htmlFor={`target-price-${productId}`}
                               style={{
-                                display: "block",
-                                marginBottom: "7px",
-                                color: "#fde68a",
-                                fontSize: "12px",
-                                fontWeight: 800,
+                                display:
+                                  "block",
+                                marginBottom:
+                                  "7px",
+                                color:
+                                  "#fde68a",
+                                fontSize:
+                                  "12px",
+                                fontWeight:
+                                  800,
                               }}
                             >
                               Hedef fiyat
                             </label>
 
                             <input
-                              id={`target-price-${cheapestProductId}`}
+                              id={`target-price-${productId}`}
                               type="text"
                               inputMode="decimal"
                               value={targetPrice}
-                              onChange={(event) => {
-                                const value = event.target.value;
+                              onChange={(
+                                event,
+                              ) => {
+                                const value =
+                                  event
+                                    .target
+                                    .value;
 
-                                setTargetPrices((currentPrices) => ({
-                                  ...currentPrices,
-                                  [cheapestProductId]: value,
-                                }));
+                                setTargetPrices(
+                                  (
+                                    currentPrices,
+                                  ) => ({
+                                    ...currentPrices,
+                                    [productId]:
+                                      value,
+                                  }),
+                                );
 
-                                setAlertMessage("");
+                                setAlertMessage(
+                                  "",
+                                );
                               }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
+                              onKeyDown={(
+                                event,
+                              ) => {
+                                if (
+                                  event.key ===
+                                  "Enter"
+                                ) {
                                   event.preventDefault();
 
-                                  void handleCreateAlert(group.cheapest);
+                                  void handleCreateAlert(
+                                    group,
+                                  );
                                 }
                               }}
                               placeholder={`Örnek: ${formatPrice(
                                 Math.max(
-                                  Number(group.cheapest.price) * 0.9,
+                                  group
+                                    .cheapestOffer
+                                    .price *
+                                    0.9,
                                   0.01,
                                 ),
                               )}`}
-                              disabled={isAlertLoading}
+                              disabled={
+                                isAlertLoading
+                              }
                               style={{
                                 width: "100%",
-                                boxSizing: "border-box",
-                                padding: "11px 12px",
+                                boxSizing:
+                                  "border-box",
+                                padding:
+                                  "11px 12px",
                                 border:
                                   "1px solid rgba(250, 204, 21, 0.3)",
-                                borderRadius: "10px",
+                                borderRadius:
+                                  "10px",
                                 outline: "none",
-                                backgroundColor: "rgba(2, 6, 23, 0.68)",
-                                color: "#ffffff",
-                                fontSize: "14px",
+                                backgroundColor:
+                                  "rgba(2, 6, 23, 0.68)",
+                                color:
+                                  "#ffffff",
+                                fontSize:
+                                  "14px",
                               }}
                             />
                           </div>
@@ -852,27 +1317,39 @@ export default function SearchPage() {
                           <button
                             type="button"
                             onClick={() =>
-                              void handleCreateAlert(group.cheapest)
+                              void handleCreateAlert(
+                                group,
+                              )
                             }
-                            disabled={isAlertLoading}
+                            disabled={
+                              isAlertLoading
+                            }
                             style={{
-                              alignSelf: "flex-end",
-                              minHeight: "42px",
-                              padding: "10px 16px",
+                              alignSelf:
+                                "flex-end",
+                              minHeight:
+                                "42px",
+                              padding:
+                                "10px 16px",
                               border:
                                 "1px solid rgba(250, 204, 21, 0.45)",
-                              borderRadius: "10px",
-                              backgroundColor: isAlertLoading
-                                ? "rgba(71, 85, 105, 0.8)"
-                                : "rgba(161, 98, 7, 0.58)",
-                              color: isAlertLoading
-                                ? "#cbd5e1"
-                                : "#fef3c7",
-                              fontSize: "14px",
+                              borderRadius:
+                                "10px",
+                              backgroundColor:
+                                isAlertLoading
+                                  ? "rgba(71, 85, 105, 0.8)"
+                                  : "rgba(161, 98, 7, 0.58)",
+                              color:
+                                isAlertLoading
+                                  ? "#cbd5e1"
+                                  : "#fef3c7",
+                              fontSize:
+                                "14px",
                               fontWeight: 900,
-                              cursor: isAlertLoading
-                                ? "wait"
-                                : "pointer",
+                              cursor:
+                                isAlertLoading
+                                  ? "wait"
+                                  : "pointer",
                             }}
                           >
                             {isAlertLoading
@@ -884,12 +1361,13 @@ export default function SearchPage() {
 
                       <div
                         style={{
-                          minWidth: "190px",
+                          minWidth: "200px",
                           padding: "16px",
                           border:
                             "1px solid rgba(34, 197, 94, 0.28)",
                           borderRadius: "16px",
-                          backgroundColor: "rgba(5, 46, 22, 0.72)",
+                          backgroundColor:
+                            "rgba(5, 46, 22, 0.72)",
                         }}
                       >
                         <div
@@ -899,7 +1377,11 @@ export default function SearchPage() {
                             fontWeight: 800,
                           }}
                         >
-                          {group.cheapest.store}
+                          {
+                            group
+                              .cheapestOffer
+                              .storeName
+                          }
                         </div>
 
                         <div
@@ -909,10 +1391,14 @@ export default function SearchPage() {
                             fontWeight: 900,
                           }}
                         >
-                          {formatPrice(group.cheapest.price)} TL
+                          {formatPrice(
+                            group.cheapestPrice,
+                          )}{" "}
+                          TL
                         </div>
 
-                        {group.totalSavings > 0 && (
+                        {group.maximumSavings >
+                          0 && (
                           <div
                             style={{
                               marginTop: "7px",
@@ -921,7 +1407,10 @@ export default function SearchPage() {
                               fontWeight: 700,
                             }}
                           >
-                            {formatPrice(group.totalSavings)} TL tasarruf
+                            {formatPrice(
+                              group.maximumSavings,
+                            )}{" "}
+                            TL tasarruf
                           </div>
                         )}
                       </div>
@@ -935,91 +1424,166 @@ export default function SearchPage() {
                       padding: "18px",
                     }}
                   >
-                    {group.offers.map((offer, index) => {
-                      const cheapestPrice = Number(
-                        group.cheapest.price,
-                      );
+                    {group.offers.map(
+                      (offer, index) => {
+                        const isCheapest =
+                          offer.isCheapest ??
+                          index === 0;
 
-                      const difference =
-                        Number(offer.price) - cheapestPrice;
+                        const difference =
+                          getOfferDifference(
+                            offer,
+                            group.cheapestPrice,
+                          );
 
-                      const isCheapest = index === 0;
-
-                      return (
-                        <article
-                          key={`${offer.id}-${offer.store}`}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: "16px",
-                            padding: "16px",
-                            border: isCheapest
-                              ? "1px solid rgba(34, 197, 94, 0.38)"
-                              : "1px solid rgba(148, 163, 184, 0.14)",
-                            borderRadius: "14px",
-                            backgroundColor: isCheapest
-                              ? "rgba(5, 46, 22, 0.55)"
-                              : "rgba(2, 6, 23, 0.45)",
-                          }}
-                        >
-                          <div>
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                flexWrap: "wrap",
-                                gap: "8px",
-                                fontSize: "18px",
-                                fontWeight: 800,
-                              }}
-                            >
-                              {offer.store}
-
-                              {isCheapest && (
-                                <span
-                                  style={{
-                                    padding: "3px 7px",
-                                    borderRadius: "999px",
-                                    backgroundColor: "#22c55e",
-                                    color: "#052e16",
-                                    fontSize: "10px",
-                                    fontWeight: 900,
-                                  }}
-                                >
-                                  EN İYİ FİYAT
-                                </span>
-                              )}
-                            </div>
-                            <div
-                              style={{
-                                marginTop: "5px",
-                                color: isCheapest
-                                  ? "#86efac"
-                                  : "#94a3b8",
-                                fontSize: "14px",
-                              }}
-                            >
-                              {isCheapest
-                                ? "Bu ürün için en uygun market"
-                                : `${formatPrice(
-                                    difference,
-                                  )} TL daha pahalı`}
-                            </div>
-                          </div>
-
-                          <div
+                        return (
+                          <article
+                            key={`${offer.storeName}-${offer.sourceUrl}-${index}`}
                             style={{
-                              whiteSpace: "nowrap",
-                              fontSize: "22px",
-                              fontWeight: 900,
+                              display:
+                                "flex",
+                              alignItems:
+                                "center",
+                              justifyContent:
+                                "space-between",
+                              flexWrap:
+                                "wrap",
+                              gap: "16px",
+                              padding: "16px",
+                              border:
+                                isCheapest
+                                  ? "1px solid rgba(34, 197, 94, 0.38)"
+                                  : "1px solid rgba(148, 163, 184, 0.14)",
+                              borderRadius:
+                                "14px",
+                              backgroundColor:
+                                isCheapest
+                                  ? "rgba(5, 46, 22, 0.55)"
+                                  : "rgba(2, 6, 23, 0.45)",
                             }}
                           >
-                            {formatPrice(offer.price)} TL
-                          </div>
-                        </article>
-                      );
-                    })}
+                            <div>
+                              <div
+                                style={{
+                                  display:
+                                    "flex",
+                                  alignItems:
+                                    "center",
+                                  flexWrap:
+                                    "wrap",
+                                  gap: "8px",
+                                  fontSize:
+                                    "18px",
+                                  fontWeight:
+                                    800,
+                                }}
+                              >
+                                {offer.storeName}
+
+                                {isCheapest && (
+                                  <span
+                                    style={{
+                                      padding:
+                                        "3px 7px",
+                                      borderRadius:
+                                        "999px",
+                                      backgroundColor:
+                                        "#22c55e",
+                                      color:
+                                        "#052e16",
+                                      fontSize:
+                                        "10px",
+                                      fontWeight:
+                                        900,
+                                    }}
+                                  >
+                                    EN İYİ FİYAT
+                                  </span>
+                                )}
+
+                                {offer.rank && (
+                                  <span
+                                    style={{
+                                      color:
+                                        "#94a3b8",
+                                      fontSize:
+                                        "12px",
+                                    }}
+                                  >
+                                    #{offer.rank}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div
+                                style={{
+                                  marginTop:
+                                    "5px",
+                                  color:
+                                    isCheapest
+                                      ? "#86efac"
+                                      : "#94a3b8",
+                                  fontSize:
+                                    "14px",
+                                }}
+                              >
+                                {isCheapest
+                                  ? "Bu ürün için en uygun market"
+                                  : `${formatPrice(
+                                      difference,
+                                    )} TL daha pahalı`}
+                              </div>
+                            </div>
+
+                            <div
+                              style={{
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  whiteSpace:
+                                    "nowrap",
+                                  fontSize:
+                                    "22px",
+                                  fontWeight:
+                                    900,
+                                }}
+                              >
+                                {formatPrice(
+                                  offer.price,
+                                )}{" "}
+                                TL
+                              </div>
+
+                              {!isCheapest &&
+                                typeof offer.priceDifferencePercentage ===
+                                  "number" && (
+                                  <div
+                                    style={{
+                                      marginTop:
+                                        "4px",
+                                      color:
+                                        "#fca5a5",
+                                      fontSize:
+                                        "12px",
+                                      fontWeight:
+                                        700,
+                                    }}
+                                  >
+                                    %
+                                    {offer.priceDifferencePercentage.toLocaleString(
+                                      "tr-TR",
+                                    )}{" "}
+                                    daha pahalı
+                                  </div>
+                                )}
+                            </div>
+                          </article>
+                        );
+                      },
+                    )}
                   </div>
                 </section>
               );
@@ -1028,24 +1592,33 @@ export default function SearchPage() {
         )}
 
         {!isLoading &&
-          initialQuery &&
-          groupedProducts.length === 0 && (
+          currentQuery &&
+          groups.length === 0 && (
             <div
               style={{
                 maxWidth: "620px",
                 margin: "36px auto 0",
                 padding: "34px",
-                border: "1px solid rgba(148, 163, 184, 0.16)",
+                border:
+                  "1px solid rgba(148, 163, 184, 0.16)",
                 borderRadius: "20px",
-                backgroundColor: "rgba(15, 23, 42, 0.7)",
+                backgroundColor:
+                  "rgba(15, 23, 42, 0.7)",
                 textAlign: "center",
               }}
             >
-              <div style={{ fontSize: "42px" }}>🔎</div>
+              <div
+                style={{
+                  fontSize: "42px",
+                }}
+              >
+                🔎
+              </div>
 
               <h2
                 style={{
-                  margin: "14px 0 8px",
+                  margin:
+                    "14px 0 8px",
                 }}
               >
                 Sonuç bulunamadı
@@ -1058,7 +1631,8 @@ export default function SearchPage() {
                   lineHeight: 1.65,
                 }}
               >
-                Ürün adını farklı yazarak veya barkodu doğrudan girerek
+                Ürün adını farklı yazarak
+                veya barkodu doğrudan girerek
                 tekrar deneyebilirsin.
               </p>
 
@@ -1087,7 +1661,32 @@ export default function SearchPage() {
             transform: rotate(360deg);
           }
         }
+
+        @media (max-width: 680px) {
+          form {
+            align-items: stretch;
+          }
+        }
       `}</style>
     </main>
+  );
+}
+export default function SearchPage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          style={{
+            minHeight: "100vh",
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          Ürün arama sayfası yükleniyor…
+        </main>
+      }
+    >
+      <SearchPageContent />
+    </Suspense>
   );
 }

@@ -1,31 +1,53 @@
-import { supabase } from "../../lib/supabase";
-
 export type OptimizationInputItem = {
   id: number;
   productName: string;
+  barcode?: string;
   quantity: number;
   unit: string;
 };
 
-export type OptimizationProduct = {
-  id: string;
-  name: string;
-  brand: string | null;
-  barcode: string | null;
-};
-
-export type OptimizationStore = {
-  id: string;
-  name: string;
-  slug: string | null;
-};
-
-export type OptimizationPrice = {
-  id: string;
-  product_id: string;
-  store_id: string;
+type CatalogOffer = {
+  storeName: string;
+  productName: string;
+  brand?: string;
+  barcode?: string;
   price: number;
   currency: string;
+  sourceUrl: string;
+  collectedAt: string;
+  isCheapest?: boolean;
+  priceDifference?: number;
+  priceDifferencePercentage?: number;
+};
+
+type CatalogProductGroup = {
+  groupKey?: string;
+  normalizedName: string;
+  productName: string;
+  brand?: string;
+  barcode?: string;
+  quantityKey?: string;
+  cheapestOffer: CatalogOffer;
+  cheapestPrice: number;
+  highestPrice: number;
+  maximumSavings: number;
+  savingsPercentage: number;
+  offerCount: number;
+  storeCount: number;
+  isComparable: boolean;
+  opportunityScore?: number;
+  offers: CatalogOffer[];
+};
+
+type CatalogApiResponse = {
+  success: boolean;
+  groupedProducts?: CatalogProductGroup[];
+  summary?: {
+    successfulMarkets?: number;
+    failedMarkets?: number;
+    totalProducts?: number;
+    totalProductGroups?: number;
+  };
 };
 
 export type OptimizedBasketItem = {
@@ -34,11 +56,26 @@ export type OptimizedBasketItem = {
   matchedProductName: string;
   quantity: number;
   unit: string;
+
   storeId: string;
   storeName: string;
+
   unitPrice: number;
   totalPrice: number;
   currency: string;
+
+  barcode?: string | null;
+  brand?: string | null;
+  sourceUrl?: string;
+
+  matchScore: number;
+  matchMethod:
+    | "barcode"
+    | "exact-name"
+    | "smart-name";
+
+  availableStoreCount: number;
+  priceDifferenceFromHighest: number;
 };
 
 export type UnmatchedBasketItem = {
@@ -52,75 +89,535 @@ export type StoreBasketGroup = {
   storeName: string;
   items: OptimizedBasketItem[];
   total: number;
+  itemCount: number;
+};
+
+export type SingleStoreOption = {
+  storeId: string;
+  storeName: string;
+  total: number;
+  matchedItemCount: number;
+  missingItemCount: number;
+  missingItems: string[];
+  isCompleteBasket: boolean;
+};
+
+export type BalancedBasketPlan = {
+  storeCount: number;
+  total: number;
+  savingsComparedWithSingleStore: number;
+  storeGroups: StoreBasketGroup[];
 };
 
 export type ShoppingOptimizationResult = {
   items: OptimizedBasketItem[];
   unmatchedItems: UnmatchedBasketItem[];
   storeGroups: StoreBasketGroup[];
+
   total: number;
   currency: string;
+
   singleStoreTotal: number;
+  singleStoreName?: string;
   savings: number;
 
   recommendedStoreCount: number;
   recommendedTotal: number;
   recommendedSavings: number;
+
+  matchedItemCount: number;
+  unmatchedItemCount: number;
+
+  singleStoreOptions: SingleStoreOption[];
+  balancedPlan: BalancedBasketPlan | null;
+
+  catalogSummary?: {
+    successfulMarkets: number;
+    failedMarkets: number;
+    totalProducts: number;
+    totalProductGroups: number;
+  };
 };
 
-function normalizeText(value: string) {
+type MatchResult = {
+  group: CatalogProductGroup;
+  score: number;
+  method:
+    | "barcode"
+    | "exact-name"
+    | "smart-name";
+};
+
+const ignoredWords = new Set([
+  "kampanya",
+  "kampanyali",
+  "indirim",
+  "indirimli",
+  "avantaj",
+  "avantajli",
+  "firsat",
+  "firsati",
+  "promosyon",
+  "promosyonlu",
+  "ekonomik",
+  "uygun",
+  "ozel",
+  "yeni",
+  "urun",
+  "urunu",
+  "paket",
+  "adet",
+  "marka",
+  "market",
+]);
+
+function roundMoney(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function normalizeText(value: string): string {
   return value
     .toLocaleLowerCase("tr-TR")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
     .replace(/ı/g, "i")
-    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/,/g, ".")
+    .replace(
+      /(\d+(?:\.\d+)?)\s*(lt|litre)\b/g,
+      "$1 l",
+    )
+    .replace(
+      /(\d+(?:\.\d+)?)\s*(gr|gram)\b/g,
+      "$1 g",
+    )
+    .replace(/[®️™️©️]/g, " ")
+    .replace(/[^\p{L}\p{N}.]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function findBestProductMatch(
+function normalizeBarcode(
+  value?: string | null,
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const digits = value.replace(/\D/g, "");
+
+  if (
+    digits.length < 8 ||
+    digits.length > 14
+  ) {
+    return null;
+  }
+
+  return digits;
+}
+
+function tokenize(value: string): string[] {
+  return Array.from(
+    new Set(
+      normalizeText(value)
+        .split(" ")
+        .map((token) => token.trim())
+        .filter(Boolean)
+        .filter(
+          (token) =>
+            !ignoredWords.has(token),
+        ),
+    ),
+  );
+}
+
+function calculateTokenSimilarity(
+  firstValue: string,
+  secondValue: string,
+): number {
+  const firstTokens = tokenize(firstValue);
+  const secondTokens = tokenize(secondValue);
+
+  if (
+    firstTokens.length === 0 ||
+    secondTokens.length === 0
+  ) {
+    return 0;
+  }
+
+  const firstSet = new Set(firstTokens);
+  const secondSet = new Set(secondTokens);
+
+  let intersectionCount = 0;
+
+  for (const token of firstSet) {
+    if (secondSet.has(token)) {
+      intersectionCount += 1;
+    }
+  }
+
+  const unionCount = new Set([
+    ...firstTokens,
+    ...secondTokens,
+  ]).size;
+
+  if (unionCount === 0) {
+    return 0;
+  }
+
+  return intersectionCount / unionCount;
+}
+
+function hasConflictingQuantity(
   requestedName: string,
-  products: OptimizationProduct[],
-): OptimizationProduct | null {
-  const normalizedRequestedName = normalizeText(requestedName);
+  group: CatalogProductGroup,
+): boolean {
+  const requestedQuantities =
+    normalizeText(requestedName).match(
+      /\b\d+(?:\.\d+)?\s*(?:ml|l|g|kg)\b/g,
+    ) ?? [];
+
+  if (requestedQuantities.length === 0) {
+    return false;
+  }
+
+  const groupText = normalizeText(
+    [
+      group.productName,
+      group.normalizedName,
+      group.quantityKey ?? "",
+    ].join(" "),
+  );
+
+  return !requestedQuantities.some(
+    (quantity) =>
+      groupText.includes(quantity),
+  );
+}
+
+function findBestGroupMatch(
+  item: OptimizationInputItem,
+  groups: CatalogProductGroup[],
+): MatchResult | null {
+  const requestedBarcode = normalizeBarcode(
+    item.barcode,
+  );
+
+  if (requestedBarcode) {
+    const barcodeGroup = groups.find((group) => {
+      const groupBarcode = normalizeBarcode(
+        group.barcode,
+      );
+
+      if (groupBarcode === requestedBarcode) {
+        return true;
+      }
+
+      return group.offers.some(
+        (offer) =>
+          normalizeBarcode(offer.barcode) ===
+          requestedBarcode,
+      );
+    });
+
+    if (barcodeGroup) {
+      return {
+        group: barcodeGroup,
+        score: 100,
+        method: "barcode",
+      };
+    }
+  }
+
+  const normalizedRequestedName = normalizeText(
+    item.productName,
+  );
 
   if (!normalizedRequestedName) {
     return null;
   }
 
-  const exactMatch = products.find(
-    (product) =>
-      normalizeText(product.name) === normalizedRequestedName,
+  const requestedTokens = tokenize(
+    item.productName,
   );
 
-  if (exactMatch) {
-    return exactMatch;
-  }
+  const exactGroup = groups.find((group) => {
+    const names = [
+      group.productName,
+      group.normalizedName,
+      ...group.offers.map(
+        (offer) => offer.productName,
+      ),
+    ];
 
-  const partialMatch = products.find((product) => {
-    const normalizedProductName = normalizeText(product.name);
-
-    return (
-      normalizedProductName.includes(normalizedRequestedName) ||
-      normalizedRequestedName.includes(normalizedProductName)
+    return names.some(
+      (name) =>
+        normalizeText(name) ===
+        normalizedRequestedName,
     );
   });
 
-  return partialMatch ?? null;
+  if (exactGroup) {
+    return {
+      group: exactGroup,
+      score: 98,
+      method: "exact-name",
+    };
+  }
+
+  let bestMatch: MatchResult | null = null;
+
+  for (const group of groups) {
+    if (
+      hasConflictingQuantity(
+        item.productName,
+        group,
+      )
+    ) {
+      continue;
+    }
+
+    const candidateNames = [
+      group.productName,
+      group.normalizedName,
+      ...group.offers.map(
+        (offer) => offer.productName,
+      ),
+    ].filter(Boolean);
+
+    let highestSimilarity = 0;
+    let containsRequestedName = false;
+    let allRequestedTokensExist = false;
+
+    for (const candidateName of candidateNames) {
+      const normalizedCandidate =
+        normalizeText(candidateName);
+
+      const candidateTokens = tokenize(
+        candidateName,
+      );
+
+      const similarity =
+        calculateTokenSimilarity(
+          item.productName,
+          candidateName,
+        );
+
+      highestSimilarity = Math.max(
+        highestSimilarity,
+        similarity,
+      );
+
+      if (
+        normalizedCandidate.includes(
+          normalizedRequestedName,
+        )
+      ) {
+        containsRequestedName = true;
+      }
+
+      if (
+        requestedTokens.length > 0 &&
+        requestedTokens.every((token) =>
+          candidateTokens.includes(token),
+        )
+      ) {
+        allRequestedTokensExist = true;
+      }
+    }
+
+    let calculatedScore =
+      highestSimilarity * 100;
+
+    if (containsRequestedName) {
+      calculatedScore += 35;
+    }
+
+    if (allRequestedTokensExist) {
+      calculatedScore += 30;
+    }
+
+    calculatedScore += Math.min(
+      (group.opportunityScore ?? 0) / 1000,
+      5,
+    );
+
+    calculatedScore = Math.min(
+      95,
+      Math.round(calculatedScore),
+    );
+
+    if (
+      calculatedScore < 35 ||
+      (bestMatch &&
+        calculatedScore <= bestMatch.score)
+    ) {
+      continue;
+    }
+
+    bestMatch = {
+      group,
+      score: calculatedScore,
+      method: "smart-name",
+    };
+  }
+
+  return bestMatch;
+}
+
+function getValidOffers(
+  group: CatalogProductGroup,
+): CatalogOffer[] {
+  const cheapestOfferByStore =
+    new Map<string, CatalogOffer>();
+
+  for (const offer of group.offers) {
+    const price = Number(offer.price);
+    const storeName =
+      offer.storeName?.trim();
+
+    if (
+      !storeName ||
+      !Number.isFinite(price) ||
+      price <= 0
+    ) {
+      continue;
+    }
+
+    const storeKey =
+      normalizeText(storeName);
+
+    const existing =
+      cheapestOfferByStore.get(storeKey);
+
+    if (
+      !existing ||
+      price < Number(existing.price)
+    ) {
+      cheapestOfferByStore.set(
+        storeKey,
+        {
+          ...offer,
+          price,
+        },
+      );
+    }
+  }
+
+  return Array.from(
+    cheapestOfferByStore.values(),
+  ).sort(
+    (firstOffer, secondOffer) =>
+      firstOffer.price -
+      secondOffer.price,
+  );
+}
+
+function createOptimizedItem(
+  inputItem: OptimizationInputItem,
+  match: MatchResult,
+): OptimizedBasketItem | null {
+  const offers = getValidOffers(
+    match.group,
+  );
+
+  const cheapestOffer = offers[0];
+
+  if (!cheapestOffer) {
+    return null;
+  }
+
+  const highestPrice =
+    offers[offers.length - 1]?.price ??
+    cheapestOffer.price;
+
+  const quantity = Number(
+    inputItem.quantity,
+  );
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  const totalPrice =
+    cheapestOffer.price * quantity;
+
+  return {
+    shoppingItemId: inputItem.id,
+    requestedProductName:
+      inputItem.productName,
+    matchedProductName:
+      match.group.productName,
+    quantity,
+    unit: inputItem.unit,
+
+    storeId: normalizeText(
+      cheapestOffer.storeName,
+    ),
+    storeName:
+      cheapestOffer.storeName,
+
+    unitPrice:
+      roundMoney(cheapestOffer.price),
+    totalPrice:
+      roundMoney(totalPrice),
+
+    currency:
+      cheapestOffer.currency || "TRY",
+
+    barcode:
+      cheapestOffer.barcode ??
+      match.group.barcode ??
+      inputItem.barcode ??
+      null,
+
+    brand:
+      cheapestOffer.brand ??
+      match.group.brand ??
+      null,
+
+    sourceUrl:
+      cheapestOffer.sourceUrl,
+
+    matchScore: match.score,
+    matchMethod: match.method,
+
+    availableStoreCount:
+      offers.length,
+
+    priceDifferenceFromHighest:
+      roundMoney(
+        Math.max(
+          highestPrice -
+            cheapestOffer.price,
+          0,
+        ) * quantity,
+      ),
+  };
 }
 
 function groupItemsByStore(
   items: OptimizedBasketItem[],
 ): StoreBasketGroup[] {
-  const groups = new Map<string, StoreBasketGroup>();
+  const groups =
+    new Map<string, StoreBasketGroup>();
 
   for (const item of items) {
-    const existingGroup = groups.get(item.storeId);
+    const existing =
+      groups.get(item.storeId);
 
-    if (existingGroup) {
-      existingGroup.items.push(item);
-      existingGroup.total += item.totalPrice;
+    if (existing) {
+      existing.items.push(item);
+      existing.total = roundMoney(
+        existing.total +
+          item.totalPrice,
+      );
+      existing.itemCount += 1;
       continue;
     }
 
@@ -129,248 +626,395 @@ function groupItemsByStore(
       storeName: item.storeName,
       items: [item],
       total: item.totalPrice,
+      itemCount: 1,
     });
   }
 
   return Array.from(groups.values()).sort(
     (firstGroup, secondGroup) =>
-      firstGroup.total - secondGroup.total,
+      secondGroup.itemCount -
+        firstGroup.itemCount ||
+      firstGroup.total -
+        secondGroup.total,
   );
+}
+
+function calculateSingleStoreOptions(
+  inputItems: OptimizationInputItem[],
+  matches: Map<number, MatchResult>,
+): SingleStoreOption[] {
+  const storeNames = new Map<
+    string,
+    string
+  >();
+
+  for (const match of matches.values()) {
+    for (const offer of getValidOffers(
+      match.group,
+    )) {
+      storeNames.set(
+        normalizeText(offer.storeName),
+        offer.storeName,
+      );
+    }
+  }
+
+  const options: SingleStoreOption[] = [];
+
+  for (const [
+    storeId,
+    storeName,
+  ] of storeNames) {
+    let total = 0;
+    let matchedItemCount = 0;
+    const missingItems: string[] = [];
+
+    for (const item of inputItems) {
+      const match = matches.get(item.id);
+
+      if (!match) {
+        missingItems.push(
+          item.productName,
+        );
+        continue;
+      }
+
+      const storeOffer =
+        getValidOffers(
+          match.group,
+        ).find(
+          (offer) =>
+            normalizeText(
+              offer.storeName,
+            ) === storeId,
+        );
+
+      if (!storeOffer) {
+        missingItems.push(
+          item.productName,
+        );
+        continue;
+      }
+
+      matchedItemCount += 1;
+
+      total +=
+        storeOffer.price *
+        item.quantity;
+    }
+
+    options.push({
+      storeId,
+      storeName,
+      total: roundMoney(total),
+      matchedItemCount,
+      missingItemCount:
+        missingItems.length,
+      missingItems,
+      isCompleteBasket:
+        missingItems.length === 0,
+    });
+  }
+
+  return options.sort(
+    (firstOption, secondOption) => {
+      if (
+        firstOption.isCompleteBasket !==
+        secondOption.isCompleteBasket
+      ) {
+        return firstOption.isCompleteBasket
+          ? -1
+          : 1;
+      }
+
+      if (
+        firstOption.missingItemCount !==
+        secondOption.missingItemCount
+      ) {
+        return (
+          firstOption.missingItemCount -
+          secondOption.missingItemCount
+        );
+      }
+
+      return (
+        firstOption.total -
+        secondOption.total
+      );
+    },
+  );
+}
+
+function createBalancedPlan(
+  optimizedItems: OptimizedBasketItem[],
+  singleStoreOptions: SingleStoreOption[],
+  optimizedTotal: number,
+): BalancedBasketPlan | null {
+  if (optimizedItems.length === 0) {
+    return null;
+  }
+
+  const completeSingleStore =
+    singleStoreOptions.find(
+      (option) =>
+        option.isCompleteBasket,
+    );
+
+  if (
+    completeSingleStore &&
+    completeSingleStore.total <=
+      optimizedTotal * 1.05
+  ) {
+    const itemsForStore =
+      optimizedItems.map((item) => ({
+        ...item,
+        storeId:
+          completeSingleStore.storeId,
+        storeName:
+          completeSingleStore.storeName,
+      }));
+
+    return {
+      storeCount: 1,
+      total:
+        completeSingleStore.total,
+      savingsComparedWithSingleStore: 0,
+      storeGroups: [
+        {
+          storeId:
+            completeSingleStore.storeId,
+          storeName:
+            completeSingleStore.storeName,
+          items: itemsForStore,
+          total:
+            completeSingleStore.total,
+          itemCount:
+            itemsForStore.length,
+        },
+      ],
+    };
+  }
+
+  const optimizedGroups =
+    groupItemsByStore(optimizedItems);
+
+  return {
+    storeCount:
+      optimizedGroups.length,
+    total:
+      roundMoney(optimizedTotal),
+    savingsComparedWithSingleStore:
+      roundMoney(
+        Math.max(
+          (completeSingleStore?.total ??
+            optimizedTotal) -
+            optimizedTotal,
+          0,
+        ),
+      ),
+    storeGroups: optimizedGroups,
+  };
 }
 
 export const shoppingOptimizationService = {
   async optimizeBasket(
     inputItems: OptimizationInputItem[],
   ): Promise<ShoppingOptimizationResult> {
-    if (inputItems.length === 0) {
+    const validInputItems =
+      inputItems.filter(
+        (item) =>
+          Boolean(item.productName.trim()) &&
+          Number.isFinite(
+            Number(item.quantity),
+          ) &&
+          Number(item.quantity) > 0,
+      );
+
+    if (validInputItems.length === 0) {
       throw new Error(
-        "Optimizasyon için en az bir ürün gereklidir.",
+        "Optimizasyon için en az bir geçerli ürün gereklidir.",
       );
     }
 
-    const client = supabase;
-
-    if (!client) {
-      throw new Error(
-        "Supabase bağlantısı kurulamadı. Ortam değişkenlerini kontrol edin.",
-      );
-    }
-
-    const [
-      productsResponse,
-      storesResponse,
-      pricesResponse,
-    ] = await Promise.all([
-      client
-        .from("products")
-        .select("id, name, brand, barcode"),
-
-      client
-        .from("stores")
-        .select("id, name, slug"),
-
-      client
-        .from("prices")
-        .select(
-          "id, product_id, store_id, price, currency",
-        ),
-    ]);
-
-    if (productsResponse.error) {
-      throw new Error(
-        `Ürünler alınamadı: ${productsResponse.error.message}`,
-      );
-    }
-
-    if (storesResponse.error) {
-      throw new Error(
-        `Marketler alınamadı: ${storesResponse.error.message}`,
-      );
-    }
-
-    if (pricesResponse.error) {
-      throw new Error(
-        `Fiyatlar alınamadı: ${pricesResponse.error.message}`,
-      );
-    }
-
-    const products =
-      (productsResponse.data ?? []) as OptimizationProduct[];
-
-    const stores =
-      (storesResponse.data ?? []) as OptimizationStore[];
-
-    const prices =
-      (pricesResponse.data ?? []) as OptimizationPrice[];
-
-    const optimizedItems: OptimizedBasketItem[] = [];
-    const unmatchedItems: UnmatchedBasketItem[] = [];
-
-    for (const inputItem of inputItems) {
-      const matchedProduct = findBestProductMatch(
-        inputItem.productName,
-        products,
-      );
-
-      if (!matchedProduct) {
-        unmatchedItems.push({
-          shoppingItemId: inputItem.id,
-          productName: inputItem.productName,
-          reason: "Ürün kataloğunda eşleşme bulunamadı.",
-        });
-
-        continue;
-      }
-
-      const productPrices = prices.filter(
-        (price) =>
-          price.product_id === matchedProduct.id &&
-          Number.isFinite(Number(price.price)) &&
-          Number(price.price) > 0,
-      );
-
-      if (productPrices.length === 0) {
-        unmatchedItems.push({
-          shoppingItemId: inputItem.id,
-          productName: inputItem.productName,
-          reason: "Bu ürün için geçerli fiyat verisi bulunamadı.",
-        });
-
-        continue;
-      }
-
-      const cheapestPrice = productPrices.reduce(
-        (cheapest, current) =>
-          Number(current.price) < Number(cheapest.price)
-            ? current
-            : cheapest,
-      );
-
-      const matchedStore = stores.find(
-        (store) => store.id === cheapestPrice.store_id,
-      );
-
-      if (!matchedStore) {
-        unmatchedItems.push({
-          shoppingItemId: inputItem.id,
-          productName: inputItem.productName,
-          reason: "Fiyatın bağlı olduğu market bulunamadı.",
-        });
-
-        continue;
-      }
-
-      const unitPrice = Number(cheapestPrice.price);
-      const totalPrice = unitPrice * inputItem.quantity;
-
-      optimizedItems.push({
-        shoppingItemId: inputItem.id,
-        requestedProductName: inputItem.productName,
-        matchedProductName: matchedProduct.name,
-        quantity: inputItem.quantity,
-        unit: inputItem.unit,
-        storeId: matchedStore.id,
-        storeName: matchedStore.name,
-        unitPrice,
-        totalPrice,
-        currency: cheapestPrice.currency || "TRY",
-      });
-    }
-
- const total = optimizedItems.reduce(
-      (sum, item) => sum + item.totalPrice,
-      0,
+    const response = await fetch(
+      "/api/catalog/all?maximumProductCount=50",
+      {
+        cache: "no-store",
+      },
     );
 
-  const matchedProductIds = optimizedItems.map((item) => {
-  const matchedProduct = products.find(
-    (product) => product.name === item.matchedProductName,
-  );
+    let catalogResponse: CatalogApiResponse;
 
-  return {
-    item,
-    productId: matchedProduct?.id ?? null,
-  };
-});
+    try {
+      catalogResponse =
+        (await response.json()) as CatalogApiResponse;
+    } catch {
+      throw new Error(
+        "Market kataloğu geçersiz cevap döndürdü.",
+      );
+    }
 
-const singleStoreOptions = stores
-  .map((store) => {
-    let storeTotal = 0;
+    if (
+      !response.ok ||
+      !catalogResponse.success
+    ) {
+      throw new Error(
+        "Canlı market fiyatları alınamadı.",
+      );
+    }
 
-    for (const matchedItem of matchedProductIds) {
-      if (!matchedItem.productId) {
-        return null;
-      }
+    const catalogGroups =
+      catalogResponse.groupedProducts ?? [];
 
-      const storePrice = prices.find(
-        (price) =>
-          price.product_id === matchedItem.productId &&
-          price.store_id === store.id &&
-          Number(price.price) > 0,
+    if (catalogGroups.length === 0) {
+      throw new Error(
+        "Optimizasyon için kullanılabilecek ürün fiyatı bulunamadı.",
+      );
+    }
+
+    const optimizedItems: OptimizedBasketItem[] =
+      [];
+
+    const unmatchedItems: UnmatchedBasketItem[] =
+      [];
+
+    const matches = new Map<
+      number,
+      MatchResult
+    >();
+
+    for (const inputItem of validInputItems) {
+      const match = findBestGroupMatch(
+        inputItem,
+        catalogGroups,
       );
 
-      if (!storePrice) {
-        return null;
+      if (!match) {
+        unmatchedItems.push({
+          shoppingItemId:
+            inputItem.id,
+          productName:
+            inputItem.productName,
+          reason:
+            "Canlı market kataloğunda yeterince güvenilir eşleşme bulunamadı.",
+        });
+        continue;
       }
 
-      storeTotal +=
-        Number(storePrice.price) *
-        matchedItem.item.quantity;
+      const optimizedItem =
+        createOptimizedItem(
+          inputItem,
+          match,
+        );
+
+      if (!optimizedItem) {
+        unmatchedItems.push({
+          shoppingItemId:
+            inputItem.id,
+          productName:
+            inputItem.productName,
+          reason:
+            "Eşleşen ürün için geçerli market fiyatı bulunamadı.",
+        });
+        continue;
+      }
+
+      matches.set(inputItem.id, match);
+      optimizedItems.push(
+        optimizedItem,
+      );
     }
+
+    const total = roundMoney(
+      optimizedItems.reduce(
+        (sum, item) =>
+          sum + item.totalPrice,
+        0,
+      ),
+    );
+
+    const storeGroups =
+      groupItemsByStore(optimizedItems);
+
+    const singleStoreOptions =
+      calculateSingleStoreOptions(
+        validInputItems,
+        matches,
+      );
+
+    const cheapestCompleteSingleStore =
+      singleStoreOptions.find(
+        (option) =>
+          option.isCompleteBasket,
+      );
+
+    const singleStoreTotal =
+      cheapestCompleteSingleStore?.total ??
+      total;
+
+    const savings = roundMoney(
+      Math.max(
+        singleStoreTotal - total,
+        0,
+      ),
+    );
+
+    const balancedPlan =
+      createBalancedPlan(
+        optimizedItems,
+        singleStoreOptions,
+        total,
+      );
 
     return {
-      storeId: store.id,
-      storeName: store.name,
-      total: storeTotal,
+      items: optimizedItems,
+      unmatchedItems,
+      storeGroups,
+
+      total,
+      currency:
+        optimizedItems[0]?.currency ??
+        "TRY",
+
+      singleStoreTotal,
+      singleStoreName:
+        cheapestCompleteSingleStore
+          ?.storeName,
+
+      savings,
+
+      recommendedStoreCount:
+        storeGroups.length,
+
+      recommendedTotal: total,
+      recommendedSavings: savings,
+
+      matchedItemCount:
+        optimizedItems.length,
+
+      unmatchedItemCount:
+        unmatchedItems.length,
+
+      singleStoreOptions,
+      balancedPlan,
+
+      catalogSummary: {
+        successfulMarkets:
+          catalogResponse.summary
+            ?.successfulMarkets ?? 0,
+
+        failedMarkets:
+          catalogResponse.summary
+            ?.failedMarkets ?? 0,
+
+        totalProducts:
+          catalogResponse.summary
+            ?.totalProducts ?? 0,
+
+        totalProductGroups:
+          catalogResponse.summary
+            ?.totalProductGroups ?? 0,
+      },
     };
-  })
-  .filter(
-    (
-      option,
-    ): option is {
-      storeId: string;
-      storeName: string;
-      total: number;
-    } => option !== null,
-  );
-
-const cheapestSingleStore = singleStoreOptions.reduce<
-  | {
-      storeId: string;
-      storeName: string;
-      total: number;
-    }
-  | null
->((cheapest, current) => {
-  if (!cheapest || current.total < cheapest.total) {
-    return current;
-  }
-
-  return cheapest;
-}, null);
-
-const storeGroups = groupItemsByStore(optimizedItems);
-
-const singleStoreTotal =
-  cheapestSingleStore?.total ?? total;
-
-const savings = Math.max(
-  0,
-  singleStoreTotal - total,
-);
-
-return {
-  items: optimizedItems,
-  unmatchedItems,
-  storeGroups,
-  total,
-  currency: optimizedItems[0]?.currency ?? "TRY",
-  singleStoreTotal,
-  savings,
-
-  recommendedStoreCount: storeGroups.length,
-  recommendedTotal: total,
-  recommendedSavings: savings,
-};
   },
 };

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { testCatalogImport } from "../../src/services/catalog/testCatalogImport";
 
 type CatalogTestResult = {
   success: boolean;
@@ -9,20 +8,42 @@ type CatalogTestResult = {
   [key: string]: unknown;
 };
 
+const sampleProducts = [
+  {
+    storeName: "A101",
+    productName: "Sütaş Tam Yağlı Süt 1 L",
+    brand: "Sütaş",
+    price: 54.9,
+    currency: "TRY",
+  },
+];
+
 export default function CatalogTestPage() {
-  const [result, setResult] =
-    useState<CatalogTestResult | null>(null);
+  const [result, setResult] = useState<CatalogTestResult | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function runTest() {
     setLoading(true);
+    setResult(null);
 
     try {
-      const response = await testCatalogImport();
-      setResult(response as CatalogTestResult);
+      const response = await fetch("/api/catalog/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ products: sampleProducts }),
+      });
+
+      const payload = (await response.json()) as CatalogTestResult;
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Katalog testi başarısız oldu.");
+      }
+
+      setResult(payload);
     } catch (error: unknown) {
       console.error(error);
-
       setResult({
         success: false,
         error:
@@ -44,9 +65,7 @@ export default function CatalogTestPage() {
         color: "#ffffff",
       }}
     >
-      <h1 style={{ marginBottom: 20 }}>
-        🧪 Catalog Import Test
-      </h1>
+      <h1 style={{ marginBottom: 20 }}>🧪 Katalog Aktarım Testi</h1>
 
       <button
         onClick={runTest}
@@ -57,7 +76,7 @@ export default function CatalogTestPage() {
           color: "#fff",
           border: "none",
           borderRadius: 8,
-          cursor: "pointer",
+          cursor: loading ? "not-allowed" : "pointer",
           fontSize: 16,
         }}
       >

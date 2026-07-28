@@ -263,9 +263,9 @@ async function extractProducts(
 
         if (
           !productName.trim() ||
-          !/(\d{1,7}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/i.test(
-            priceText,
-          )
+          !/(?:₺\s*\d{1,7}(?:\.\d{3})*,\d{2}|\d{1,7}(?:\.\d{3})*,\d{2}\s*(?:TL|₺))/i.test(
+  priceText,
+)
         ) {
           continue;
         }
