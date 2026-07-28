@@ -1,0 +1,2 @@
+import Link from "next/link";
+export default function AccountPage() { return <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 20px" }}><h1>Hesap ve Verilerim</h1><p>Hesabını ve ilişkili kullanıcı verilerini yönetmek için aşağıdaki güvenli API uçları kullanılabilir.</p><ul><li><code>GET /api/account/export</code></li><li><code>DELETE /api/account/delete</code></li></ul><Link href="/privacy">Gizlilik politikasını oku</Link></main>; }

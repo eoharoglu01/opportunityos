@@ -1,71 +1,62 @@
-# OpportunityOS Final Web Paketi
+# OpportunityOS Production Release Kurulumu
 
-Bu paket, mevcut ana projeye güvenli aktarım için hazırlanmıştır.
-
-## Tek komutla kurulum
-
-ZIP'i açtıktan sonra Terminal'de paket klasörüne girin ve çalıştırın:
+## 1. Kurulum
+ZIP'i açtıktan sonra klasörün içinde:
 
 ```bash
-bash scripts/install-final.sh
+bash scripts/install-production-complete.sh
 ```
 
-Betik varsayılan olarak `~/OpportunityOS/opportunityos` projesini yedekler, yeni sürümü aktarır, `.env.local` dosyasını korur ve şu kontrolleri çalıştırır:
+Bu işlem ana projeyi tarih damgalı klasöre yedekler, yeni kodu aktarır, `.env.local` ve `.env.production` dosyalarını korur ve Mac üzerinde şu kontrolleri çalıştırır:
+
+- `pnpm install --frozen-lockfile`
+- `pnpm lint`
+- `pnpm exec tsc --noEmit`
+- `pnpm build`
+- `pnpm production:verify`
+
+## 2. Supabase
+SQL Editor'da sırayla mevcut migration'ların ardından şunu çalıştır:
+
+```text
+supabase/migrations/006_production_hardening.sql
+```
+
+## 3. Secret üretimi
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm lint
-pnpm build
+pnpm secrets:generate
 ```
 
-## Zorunlu veritabanı adımı
+Çıktıdaki değerleri Vercel Production Environment Variables'a ekle. Service-role anahtarını hiçbir zaman `NEXT_PUBLIC_` ile tanımlama.
 
-Supabase SQL Editor'da şu dosyayı bir kez çalıştırın:
+## 4. Vercel değişkenleri
+`.env.production.example` içindeki değişkenleri Vercel'e ekle.
 
-```text
-supabase/migrations/004_catalog_sync_runs.sql
+## 5. Test
+
+```bash
+pnpm production:check
+APP_URL=https://alanadiniz.com pnpm production:smoke
 ```
 
-Mevcut `003_automatic_price_history.sql` tetikleyicisi, fiyat değiştiğinde fiyat geçmişini otomatik kaydeder.
+Cron testi:
 
-## Gerekli ortam değişkenleri
-
-`.env.example` içindeki değişkenleri `.env.local` ve üretim ortamında tanımlayın. Özellikle:
-
-- `SUPABASE_SERVICE_ROLE_KEY` yalnızca sunucu ortamında tutulmalıdır.
-- `CRON_SECRET` uzun ve rastgele olmalıdır.
-- Service role anahtarı tarayıcıya veya Git'e gönderilmemelidir.
-
-## Otomatik fiyat güncelleme
-
-Vercel Cron her gün UTC 03:00'te aşağıdaki rotayı çağırır:
-
-```text
-/api/catalog/sync?maximumProductCount=20
+```bash
+curl -i -X POST -H "Authorization: Bearer $CRON_SECRET" "https://alanadiniz.com/api/catalog/sync?markets=sok&maximumProductCount=5"
 ```
 
-Elle geliştirme testi:
+## 6. Git ve main
+Ana projede temiz build sonrasında:
 
-```text
-http://localhost:3000/api/catalog/sync?maximumProductCount=5
+```bash
+git add .
+git commit -m "OpportunityOS production release 1.0.0"
+git push
+git checkout main
+git pull
+git merge --no-ff feat/user-alert-system
+git push origin main
+git tag -a v1.0.0 -m "OpportunityOS v1.0.0"
+git push origin v1.0.0
 ```
-
-Üretimde `Authorization: Bearer <CRON_SECRET>` gereklidir.
-
-Son çalışmaları görmek için:
-
-```text
-GET /api/catalog/sync/status
-```
-
-Bu rota da üretimde Bearer secret ister.
-
-## Yayın öncesi dış işlemler
-
-Kod dışında kullanıcı hesaplarında tamamlanması gerekenler:
-
-1. Supabase migration'larını production veritabanında çalıştırmak.
-2. Vercel environment variables eklemek.
-3. Alan adı ve production deployment yapmak.
-4. Gerçek market collector'larını production IP ve çalışma süresi koşullarında test etmek.
-5. Apple/Google mağazaları hedefleniyorsa web uygulamasını ayrıca mobil kabuğa paketlemek ve geliştirici hesaplarından yayınlamak.

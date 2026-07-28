@@ -1,6 +1,6 @@
 {
   "name": "opportunityos",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "verify": "pnpm lint && pnpm build",
-    "catalog:sync": "curl -fsS \"http://localhost:3000/api/catalog/sync?maximumProductCount=20\""
+    "catalog:sync": "curl -fsS \"http://localhost:3000/api/catalog/sync?maximumProductCount=20\"",
+    "typecheck": "tsc --noEmit",
+    "production:verify": "node scripts/verify-production.mjs",
+    "production:smoke": "node scripts/smoke-test.mjs",
+    "production:check": "pnpm lint && pnpm typecheck && pnpm build && pnpm production:verify",
+    "secrets:generate": "node scripts/generate-secrets.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",

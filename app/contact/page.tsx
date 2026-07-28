@@ -1,0 +1,1 @@
+export default function ContactPage() { return <main style={{ maxWidth: 860, margin: "0 auto", padding: "48px 20px" }}><h1>İletişim</h1><p>Destek e-postası production yayını öncesinde tanımlanmalıdır: <strong>destek@alanadiniz.com</strong></p></main>; }

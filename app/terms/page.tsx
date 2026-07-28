@@ -1,0 +1,1 @@
+export default function TermsPage() { return <main style={{ maxWidth: 860, margin: "0 auto", padding: "48px 20px", lineHeight: 1.7 }}><h1>Kullanım Koşulları</h1><p>Fiyatlar market kaynaklarından otomatik toplanır ve değişebilir. Satın alma öncesinde marketin güncel fiyatı doğrulanmalıdır. OpportunityOS kesintisiz veya hatasız hizmet garantisi vermez.</p></main>; }
