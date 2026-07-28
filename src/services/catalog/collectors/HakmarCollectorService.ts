@@ -305,16 +305,6 @@ export class HakmarCollectorService
       await acceptCookies(page);
       await page.waitForTimeout(2_000);
       await scrollPage(page, delayMs);
-      console.log("HAKMAR DEBUG URL:", page.url());
-console.log("HAKMAR DEBUG BAŞLIK:", await page.title());
-console.log(
-  "HAKMAR DEBUG METİN:",
-  (await page.locator("body").innerText()).slice(0, 3000),
-);
-console.log(
-  "HAKMAR DEBUG IFRAME SAYISI:",
-  page.frames().length,
-);
 
       const products = await extractProducts(
         page,

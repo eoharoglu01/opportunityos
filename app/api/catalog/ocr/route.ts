@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
-import { catalogImportService } from "../../../../src/services/catalog/CatalogImportService";
 function getOpenAIClient() {
   const apiKey = process.env.OPENAI_API_KEY;
 

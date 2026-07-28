@@ -445,6 +445,7 @@ useEffect(() => {
                     }}
                   >
                     {productImageUrl && !imageFailed ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={productImageUrl}
                         alt={`${productSummary.productName} ürün görseli`}

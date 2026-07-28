@@ -42,7 +42,11 @@ export function getSupabaseEnv() {
 export function isSupabaseConfigured(): boolean {
   const { url, anonKey } = getSupabaseEnv();
   const useSupabaseFlag = process.env.NEXT_PUBLIC_USE_SUPABASE?.trim().toLowerCase() === "true";
-  return useSupabaseFlag && Boolean(url) && Boolean(anonKey);
+  return (
+    useSupabaseFlag &&
+    isValidSupabaseUrl(url) &&
+    isValidSupabaseAnonKey(anonKey)
+  );
 }
 
 export function getSupabaseRuntimeMode(): SupabaseRuntimeMode {

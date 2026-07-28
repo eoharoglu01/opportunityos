@@ -25,7 +25,46 @@ type CatalogRequestBody = {
 };
 
 const DEFAULT_SOURCE_URL =
-"https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460"
+  "https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460";
+
+const defaultSourceUrls: Record<string, string> = {
+  sok: "https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460",
+  migros: "https://www.migros.com.tr/",
+  carrefour: "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
+  carrefoursa: "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
+  bim: "https://www.bim.com.tr/categories/100/aktuel-urunler.aspx",
+  a101: "https://www.a101.com.tr/kapida/sut-urunleri-kahvaltilik/sut",
+  tarimkredi: "https://www.tkkoop.com.tr/urun-kategori/sut",
+  "tarim-kredi": "https://www.tkkoop.com.tr/urun-kategori/sut",
+  bizimtoptan: "https://www.bizimtoptan.com.tr/sutas",
+  "bizim-toptan": "https://www.bizimtoptan.com.tr/sutas",
+  hakmar: "https://www.hakmarexpress.com.tr/",
+  hakmarexpress: "https://www.hakmarexpress.com.tr/",
+  "hakmar-express": "https://www.hakmarexpress.com.tr/",
+  kim: "https://www.kimgeldi.com/search",
+  kimmarket: "https://www.kimgeldi.com/search",
+  "kim-market": "https://www.kimgeldi.com/search",
+  happy: "https://www.happycenter.com.tr/",
+  happycenter: "https://www.happycenter.com.tr/",
+  "happy-center": "https://www.happycenter.com.tr/",
+  onur: "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
+  onurmarket: "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
+  "onur-market": "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
+};
+
+function normalizeMarket(value: string): string {
+  const normalizedMarket = value.trim().toLocaleLowerCase("tr-TR");
+
+  if (normalizedMarket === "carrefour") return "carrefoursa";
+  if (["tarimkredi", "tarim-kredi"].includes(normalizedMarket)) return "tarım kredi";
+  if (["bizimtoptan", "bizim-toptan"].includes(normalizedMarket)) return "bizim toptan";
+  if (["hakmar", "hakmarexpress", "hakmar-express"].includes(normalizedMarket)) return "hakmar express";
+  if (["kim", "kimmarket", "kim-market"].includes(normalizedMarket)) return "kim market";
+  if (["happy", "happycenter", "happy-center"].includes(normalizedMarket)) return "happy center";
+  if (["onur", "onurmarket", "onur-market"].includes(normalizedMarket)) return "onur market";
+
+  return normalizedMarket;
+}
 
 function parseMaximumProductCount(
   value: unknown,
@@ -54,77 +93,7 @@ export async function GET(
     .trim()
     .toLocaleLowerCase("tr-TR");
 
-const defaultSourceUrls: Record<string, string> = {
-  sok: "https://www.sokmarket.com.tr/sut-ve-sut-urunleri-c-460",
-  migros: "https://www.migros.com.tr/",
-  carrefour:
-    "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
-  carrefoursa:
-    "https://www.carrefoursa.com/sut-ve-sut-urunleri/c/9006",
-  bim:
-    "https://www.bim.com.tr/categories/100/aktuel-urunler.aspx",
-  a101:
-    "https://www.a101.com.tr/kapida/sut-urunleri-kahvaltilik/sut",
-  tarimkredi:
-    "https://www.tkkoop.com.tr/urun-kategori/sut",
-  "tarim-kredi":
-    "https://www.tkkoop.com.tr/urun-kategori/sut",
-    bizimtoptan:
-  "https://www.bizimtoptan.com.tr/sutas",
-"bizim-toptan":
-  "https://www.bizimtoptan.com.tr/sutas",
-  hakmar:
-  "https://www.hakmarexpress.com.tr/",
-hakmarexpress:
-  "https://www.hakmarexpress.com.tr/",
-"hakmar-express":
-  "https://www.hakmarexpress.com.tr/",
-kim:
-  "https://www.kimgeldi.com/search",
-kimmarket:
-  "https://www.kimgeldi.com/search",
-"kim-market":
-  "https://www.kimgeldi.com/search",
-  happy:
-  "https://www.happycenter.com.tr/",
-happycenter:
-  "https://www.happycenter.com.tr/",
-"happy-center":
-  "https://www.happycenter.com.tr/",
-onur:
-  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
-"onur-market":
-  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
-onurmarket:
-  "https://kurumsal.onurmarket.com/tr/kampanyalar/insertlerimiz?region=istanbul&campaign=istanbul-genel-insert",
-};
-
-const collectorMarket =
-  normalizedMarket === "carrefour"
-    ? "carrefoursa"
-    : normalizedMarket === "tarimkredi" ||
-        normalizedMarket === "tarim-kredi"
-      ? "tarım kredi"
-      : normalizedMarket === "bizimtoptan" ||
-          normalizedMarket === "bizim-toptan"
-        ? "bizim toptan"
-        : normalizedMarket === "hakmar" ||
-    normalizedMarket === "hakmarexpress" ||
-    normalizedMarket === "hakmar-express"
-  ? "hakmar express"
-  : normalizedMarket === "kim" ||
-    normalizedMarket === "kimmarket" ||
-    normalizedMarket === "kim-market"
-  ? "kim market"
-  : normalizedMarket === "happy" ||
-    normalizedMarket === "happycenter" ||
-    normalizedMarket === "happy-center"
-  ? "happy center"
-  : normalizedMarket === "onur" ||
-      normalizedMarket === "onurmarket" ||
-      normalizedMarket === "onur-market"
-    ? "onur market"
-    : normalizedMarket;
+  const collectorMarket = normalizeMarket(normalizedMarket);
 
   const sourceUrl =
     requestUrl.searchParams.get("sourceUrl") ??
@@ -170,11 +139,17 @@ export async function POST(
   { params }: { params: Promise<{ market: string }> },
 ) {
   try {
+    const { market } = await params;
+    const normalizedMarket = market.trim().toLocaleLowerCase("tr-TR");
+    const collectorMarket = normalizeMarket(normalizedMarket);
+
     const body =
       (await request.json()) as CatalogRequestBody;
 
     const sourceUrl =
-      body.sourceUrl ?? DEFAULT_SOURCE_URL;
+      body.sourceUrl ??
+      defaultSourceUrls[normalizedMarket] ??
+      DEFAULT_SOURCE_URL;
 
     const maximumProductCount =
       parseMaximumProductCount(
@@ -183,7 +158,7 @@ export async function POST(
 
     const collectionResult =
       await collectorEngine.collectFromStore(
-        "ŞOK",
+        collectorMarket,
         {
           sourceUrl,
           maximumProductCount,
@@ -195,7 +170,7 @@ export async function POST(
         {
           success: false,
           message:
-            "ŞOK ürünleri toplanamadı.",
+            `${collectionResult.storeName} ürünleri toplanamadı.`,
           collection: collectionResult,
         },
         {
@@ -263,7 +238,7 @@ export async function POST(
         message:
           error instanceof Error
             ? error.message
-            : "ŞOK katalog aktarımı sırasında bilinmeyen hata oluştu.",
+            : "Katalog aktarımı sırasında bilinmeyen hata oluştu.",
       },
       {
         status: 500,

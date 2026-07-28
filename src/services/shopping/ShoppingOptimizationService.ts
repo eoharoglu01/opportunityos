@@ -1018,9 +1018,6 @@ export const shoppingOptimizationService = {
       ),
     );
 
-    const storeGroups =
-      groupItemsByStore(optimizedItems);
-
     const singleStoreOptions =
       calculateSingleStoreOptions(
         validInputItems,

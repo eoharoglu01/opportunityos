@@ -14,8 +14,8 @@ export type ShoppingListItem = {
   list_id: number;
   user_id: string;
   product_name: string;
-barcode?: string | null;
-  image_url?: string | null;
+  barcode: string | null;
+  image_url: string | null;
   quantity: number;
   unit: string;
   is_completed: boolean;
@@ -23,15 +23,16 @@ barcode?: string | null;
   updated_at: string;
 };
 
-export type ShoppingListWithItems = ShoppingList & {
-  items: ShoppingListItem[];
-};
+export type ShoppingListWithItems =
+  ShoppingList & {
+    items: ShoppingListItem[];
+  };
 
 export type AddShoppingListItemInput = {
   listId: number;
   productName: string;
-  barcode?: string;
-imageUrl?: string | null;
+  barcode?: string | null;
+  imageUrl?: string | null;
   quantity: number;
   unit: string;
 };
@@ -51,11 +52,15 @@ function createServiceError(
     error.message,
     error.details,
     error.hint,
-    error.code ? `Kod: ${error.code}` : undefined,
+    error.code
+      ? `Kod: ${error.code}`
+      : undefined,
   ].filter(Boolean);
 
   return new Error(
-    parts.length > 0 ? parts.join(" — ") : fallbackMessage,
+    parts.length > 0
+      ? parts.join(" — ")
+      : fallbackMessage,
   );
 }
 
@@ -90,9 +95,12 @@ export class ShoppingListService {
     }
 
     const {
-      data: { session: refreshedSession },
+      data: {
+        session: refreshedSession,
+      },
       error: refreshError,
-    } = await client.auth.refreshSession();
+    } =
+      await client.auth.refreshSession();
 
     if (refreshError) {
       throw createServiceError(
@@ -118,21 +126,29 @@ export class ShoppingListService {
     }
 
     if (!user) {
-      throw new Error("Bu işlem için giriş yapmalısınız.");
+      throw new Error(
+        "Bu işlem için giriş yapmalısınız.",
+      );
     }
 
     return user;
   }
 
-  async getLists(): Promise<ShoppingList[]> {
+  async getLists(): Promise<
+    ShoppingList[]
+  > {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const { data, error } = await client
-      .from("shopping_lists")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    const { data, error } =
+      await client
+        .from("shopping_lists")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", {
+          ascending: false,
+        });
 
     if (error) {
       throw createServiceError(
@@ -141,21 +157,27 @@ export class ShoppingListService {
       );
     }
 
-    return (data ?? []) as ShoppingList[];
+    return (
+      data ?? []
+    ) as ShoppingList[];
   }
 
   async getListWithItems(
     listId: number,
   ): Promise<ShoppingListWithItems> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const { data: list, error: listError } = await client
+    const {
+      data: list,
+      error: listError,
+    } = await client
       .from("shopping_lists")
       .select("*")
       .eq("id", listId)
       .eq("user_id", user.id)
-      .single();
+      .maybeSingle();
 
     if (listError) {
       throw createServiceError(
@@ -165,15 +187,22 @@ export class ShoppingListService {
     }
 
     if (!list) {
-      throw new Error("Alışveriş listesi bulunamadı.");
+      throw new Error(
+        "Alışveriş listesi bulunamadı.",
+      );
     }
 
-    const { data: items, error: itemsError } = await client
+    const {
+      data: items,
+      error: itemsError,
+    } = await client
       .from("shopping_list_items")
       .select("*")
       .eq("list_id", listId)
       .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
+      .order("created_at", {
+        ascending: true,
+      });
 
     if (itemsError) {
       throw createServiceError(
@@ -184,26 +213,35 @@ export class ShoppingListService {
 
     return {
       ...(list as ShoppingList),
-      items: (items ?? []) as ShoppingListItem[],
+      items: (
+        items ?? []
+      ) as ShoppingListItem[],
     };
   }
 
-  async createList(name: string): Promise<ShoppingList> {
+  async createList(
+    name: string,
+  ): Promise<ShoppingList> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const cleanedName = name.trim() || "Alışveriş Listem";
+    const cleanedName =
+      name.trim() ||
+      "Alışveriş Listem";
 
-    const { data, error } = await client
-      .from("shopping_lists")
-      .insert({
-        user_id: user.id,
-        name: cleanedName,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .select("*")
-      .single();
+    const { data, error } =
+      await client
+        .from("shopping_lists")
+        .insert({
+          user_id: user.id,
+          name: cleanedName,
+          is_active: true,
+          updated_at:
+            new Date().toISOString(),
+        } as never)
+        .select("*")
+        .single();
 
     if (error) {
       throw createServiceError(
@@ -213,7 +251,9 @@ export class ShoppingListService {
     }
 
     if (!data) {
-      throw new Error("Alışveriş listesi oluşturulamadı.");
+      throw new Error(
+        "Alışveriş listesi oluşturulamadı.",
+      );
     }
 
     return data as ShoppingList;
@@ -223,33 +263,57 @@ export class ShoppingListService {
     input: AddShoppingListItemInput,
   ): Promise<ShoppingListItem> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const productName = input.productName.trim();
+    const productName =
+      input.productName.trim();
+
+    const unit =
+      input.unit.trim() || "adet";
 
     if (!productName) {
-      throw new Error("Ürün adı boş bırakılamaz.");
+      throw new Error(
+        "Ürün adı boş bırakılamaz.",
+      );
     }
 
-    if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
-      throw new Error("Miktar sıfırdan büyük olmalıdır.");
+    if (
+      !Number.isFinite(
+        input.quantity,
+      ) ||
+      input.quantity <= 0
+    ) {
+      throw new Error(
+        "Miktar sıfırdan büyük olmalıdır.",
+      );
     }
 
-    const { data, error } = await client
-      .from("shopping_list_items")
-      .insert({
-        list_id: input.listId,
-        user_id: user.id,
-        product_name: productName,
-        barcode: input.barcode,
-image_url: input.imageUrl,
-        quantity: input.quantity,
-        unit: input.unit.trim() || "adet",
-        is_completed: false,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .select("*")
-      .single();
+    const { data, error } =
+      await client
+        .from(
+          "shopping_list_items",
+        )
+        .insert({
+          list_id: input.listId,
+          user_id: user.id,
+          product_name:
+            productName,
+          barcode:
+            input.barcode?.trim() ||
+            null,
+          image_url:
+            input.imageUrl?.trim() ||
+            null,
+          quantity:
+            input.quantity,
+          unit,
+          is_completed: false,
+          updated_at:
+            new Date().toISOString(),
+        } as never)
+        .select("*")
+        .single();
 
     if (error) {
       throw createServiceError(
@@ -259,7 +323,9 @@ image_url: input.imageUrl,
     }
 
     if (!data) {
-      throw new Error("Ürün alışveriş listesine eklenemedi.");
+      throw new Error(
+        "Ürün alışveriş listesine eklenemedi.",
+      );
     }
 
     return data as ShoppingListItem;
@@ -270,16 +336,22 @@ image_url: input.imageUrl,
     isCompleted: boolean,
   ): Promise<void> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const { error } = await client
-      .from("shopping_list_items")
-      .update({
-        is_completed: isCompleted,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .eq("id", itemId)
-      .eq("user_id", user.id);
+    const { error } =
+      await client
+        .from(
+          "shopping_list_items",
+        )
+        .update({
+          is_completed:
+            isCompleted,
+          updated_at:
+            new Date().toISOString(),
+        } as never)
+        .eq("id", itemId)
+        .eq("user_id", user.id);
 
     if (error) {
       throw createServiceError(
@@ -289,15 +361,21 @@ image_url: input.imageUrl,
     }
   }
 
-  async removeItem(itemId: number): Promise<void> {
+  async removeItem(
+    itemId: number,
+  ): Promise<void> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const { error } = await client
-      .from("shopping_list_items")
-      .delete()
-      .eq("id", itemId)
-      .eq("user_id", user.id);
+    const { error } =
+      await client
+        .from(
+          "shopping_list_items",
+        )
+        .delete()
+        .eq("id", itemId)
+        .eq("user_id", user.id);
 
     if (error) {
       throw createServiceError(
@@ -307,15 +385,19 @@ image_url: input.imageUrl,
     }
   }
 
-  async removeList(listId: number): Promise<void> {
+  async removeList(
+    listId: number,
+  ): Promise<void> {
     const client = this.getClient();
-    const user = await this.getAuthenticatedUser();
+    const user =
+      await this.getAuthenticatedUser();
 
-    const { error } = await client
-      .from("shopping_lists")
-      .delete()
-      .eq("id", listId)
-      .eq("user_id", user.id);
+    const { error } =
+      await client
+        .from("shopping_lists")
+        .delete()
+        .eq("id", listId)
+        .eq("user_id", user.id);
 
     if (error) {
       throw createServiceError(
@@ -326,4 +408,5 @@ image_url: input.imageUrl,
   }
 }
 
-export const shoppingListService = new ShoppingListService();
+export const shoppingListService =
+  new ShoppingListService();

@@ -144,11 +144,13 @@ export default function ScannerPage() {
 
     void startCamera();
 
+    const videoElement = videoRef.current;
+
     return () => {
       isMounted = false;
       controls?.stop();
 
-      const stream = videoRef.current?.srcObject;
+      const stream = videoElement?.srcObject;
 
       if (stream instanceof MediaStream) {
         stream.getTracks().forEach((track) => track.stop());

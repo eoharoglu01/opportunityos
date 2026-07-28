@@ -15,13 +15,6 @@ export type MigrosCollectedProduct = {
 };
 
 
-
-type CollectOptions = {
-  sourceUrl: string;
-  maximumProductCount?: number;
-  delayBetweenScrollsMs?: number;
-};
-
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }

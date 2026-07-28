@@ -486,10 +486,6 @@ const catalogLinks = await page
     })),
   );
 
-console.log(
-  "ONUR MARKET GERÇEK KATALOG BAĞLANTILARI:",
-  catalogLinks,
-);
 const currentPdfUrl = catalogLinks.find((link) =>
   link.href.toLocaleLowerCase("tr-TR").includes(".pdf"),
 )?.href;
@@ -502,10 +498,6 @@ if (!currentPdfUrl) {
 
 const pdfText = await extractPdfText(currentPdfUrl);
 
-console.log(
-  "ONUR MARKET PDF METNİ:",
-  pdfText.slice(0, 3000),
-);
       const products = extractProductsFromPdfText(
   pdfText,
   currentPdfUrl,
