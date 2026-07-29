@@ -431,7 +431,9 @@ function findBestGroupMatch(
 
       let candidateScore =
         similarity * 100;
-
+if (allRequestedTokensExist) {
+  candidateScore += 30;
+}
       if (
         normalizedCandidate ===
         normalizedRequestedName
