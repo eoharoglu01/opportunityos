@@ -14,6 +14,9 @@ importers:
       '@capacitor/core':
         specifier: ^8.4.2
         version: 8.4.2
+      '@capacitor/ios':
+        specifier: 8.4.2
+        version: 8.4.2(@capacitor/core@8.4.2)
       '@supabase/ssr':
         specifier: ^0.12.3
         version: 0.12.3(@supabase/supabase-js@2.110.8)
@@ -164,6 +167,11 @@ packages:
 
   '@capacitor/core@8.4.2':
     resolution: {integrity: sha512-fQPRb3JXRaU2pnufDUvqOjhsrYxDQeFRZyaj/sHydIUxD2NxOGHKMpmKUdI+U4OOmKuGZyvRpi7TSJU+7Bjbmg==}
+
+  '@capacitor/ios@8.4.2':
+    resolution: {integrity: sha512-ClVzIjK++yRjsRPOpdEzhsZfbHfoEc0f4M6vD0v7sWh0qcoF6NkxNAeHpWTn4OPJpJfpGGoYsq+IfEHrYyBiWA==}
+    peerDependencies:
+      '@capacitor/core': ^8.4.0
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -2716,6 +2724,10 @@ snapshots:
   '@capacitor/core@8.4.2':
     dependencies:
       tslib: 2.8.1
+
+  '@capacitor/ios@8.4.2(@capacitor/core@8.4.2)':
+    dependencies:
+      '@capacitor/core': 8.4.2
 
   '@emnapi/core@1.10.0':
     dependencies:
