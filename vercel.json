@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/catalog/sync?markets=sok,migros,carrefour&maximumProductCount=20", "schedule": "0 2 * * *" },
+    { "path": "/api/catalog/sync?markets=bim,a101,tarimkredi&maximumProductCount=20", "schedule": "20 2 * * *" },
+    { "path": "/api/catalog/sync?markets=bizimtoptan,hakmar,happy&maximumProductCount=20", "schedule": "40 2 * * *" }
+  ]
+}

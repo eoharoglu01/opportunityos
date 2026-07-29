@@ -1,0 +1,43 @@
+{
+  "name": "opportunityos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "verify": "pnpm lint && pnpm build",
+    "catalog:sync": "curl -fsS \"http://localhost:3000/api/catalog/sync?maximumProductCount=20\"",
+    "typecheck": "tsc --noEmit",
+    "production:verify": "node scripts/verify-production.mjs",
+    "production:smoke": "node scripts/smoke-test.mjs",
+    "production:check": "pnpm lint && pnpm typecheck && pnpm build && pnpm production:verify",
+    "secrets:generate": "node scripts/generate-secrets.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.8",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "next": "16.2.11",
+    "openai": "^6.49.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.62.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.10.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.11",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@10.14.0"
+}
