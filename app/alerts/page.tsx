@@ -121,7 +121,7 @@ export default function AlertsPage() {
       <section style={styles.container}>
         <header style={styles.header}>
           <div>
-            <p style={styles.eyebrow}>OPPORTUNITYOS</p>
+            <p style={styles.eyebrow}>MARKETRADAR</p>
             <h1 style={styles.title}>Fiyat Alarmlarım</h1>
             <p style={styles.subtitle}>
               Hedef fiyatlarını takip et, aktif alarmlarını yönet.

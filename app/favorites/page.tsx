@@ -97,7 +97,7 @@ export default function FavoritesPage() {
       <section style={styles.container}>
         <header style={styles.header}>
           <div>
-            <p style={styles.eyebrow}>OPPORTUNITYOS</p>
+<p style={styles.eyebrow}>MARKETRADAR</p>
             <h1 style={styles.title}>Favorilerim</h1>
             <p style={styles.subtitle}>
               Kaydettiğin ürünleri ve güncel fiyatlarını burada görebilirsin.

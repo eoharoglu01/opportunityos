@@ -99,7 +99,7 @@ export default function DashboardPage() {
       <section style={styles.container}>
         <header style={styles.header}>
           <div>
-            <p style={styles.eyebrow}>OPPORTUNITYOS PANELİ</p>
+            <p style={styles.eyebrow}>MARKETRADAR PANELİ</p>
             <h1 style={styles.title}>Hoş geldin, {fullName}</h1>
             <p style={styles.subtitle}>{user.email}</p>
           </div>
